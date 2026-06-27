@@ -10,5 +10,6 @@ require (
 	github.com/gobwas/httphead v0.1.0 // indirect
 	github.com/gobwas/pool v0.2.1 // indirect
 	github.com/gobwas/ws v1.4.0 // indirect
+	github.com/pelletier/go-toml/v2 v2.4.2 // indirect
 	golang.org/x/sys v0.42.0 // indirect
 )
