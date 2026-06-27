@@ -1,5 +1,6 @@
 # Steno - Manual Tests Session Recording
 
+[![CI](https://github.com/amasotti/steno/actions/workflows/ci.yml/badge.svg)](https://github.com/amasotti/steno/actions/workflows/ci.yml)
 
 > A headful Chromium session recorder & inspector. It turns a manual test flow into a clean, signal-only, dual-audience timeline. Records everything
 > that matters, judges nothing.
