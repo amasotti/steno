@@ -131,7 +131,6 @@ jobs:
           args: --verbose --latest
         env:
           OUTPUT: CHANGES.md
-          GITHUB_REPO: ${{ github.repository }}
 
       - name: Download binaries
         uses: actions/download-artifact@v4
