@@ -11,6 +11,7 @@ import (
 
 	"github.com/amasotti/steno/internal/inspect"
 	cdprecorder "github.com/amasotti/steno/internal/recorder/cdp"
+	"github.com/amasotti/steno/internal/summary"
 	"github.com/amasotti/steno/internal/timeline"
 )
 
@@ -34,7 +35,7 @@ func Run(ctx context.Context, args []string, stdout io.Writer, _ io.Writer) erro
 		if err != nil {
 			return err
 		}
-		return runRecord(ctx, opts)
+		return runRecord(ctx, opts, stdout)
 	case "inspect":
 		return runInspect(args[1:], stdout)
 	case "render":
@@ -84,7 +85,7 @@ func parseRecord(args []string) (RecordOptions, error) {
 	return opts, nil
 }
 
-func runRecord(ctx context.Context, opts RecordOptions) error {
+func runRecord(ctx context.Context, opts RecordOptions, stdout io.Writer) error {
 	if err := os.MkdirAll(opts.Out, 0o755); err != nil {
 		return fmt.Errorf("create output directory: %w", err)
 	}
@@ -96,11 +97,15 @@ func runRecord(ctx context.Context, opts RecordOptions) error {
 	defer func() { _ = file.Close() }()
 
 	events, errs := newRecorder(opts.URL).Record(ctx)
+	var recorded []timeline.Event
+	timelinePath := filepath.Join(opts.Out, "timeline.jsonl")
 	for event := range events {
 		if err := timeline.WriteJSONL(file, event); err != nil {
 			return fmt.Errorf("write timeline event: %w", err)
 		}
+		recorded = append(recorded, event)
 	}
+	return printSessionSummary(stdout, summary.FromEvents(recorded), timelinePath)
 
 	if err, ok := <-errs; ok && err != nil {
 		return err
@@ -136,4 +141,41 @@ func runInspect(args []string, stdout io.Writer) error {
 		}
 	}
 	return nil
+}
+
+func printSessionSummary(w io.Writer, result summary.Summary, timelinePath string) error {
+	if _, err := fmt.Fprintln(w, "Session summary"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "Calls: %d\n", result.TotalCalls); err != nil {
+		return err
+	}
+	if len(result.Origins) == 0 {
+		if _, err := fmt.Fprintln(w, "Origins: none"); err != nil {
+			return err
+		}
+	} else {
+		if _, err := fmt.Fprintln(w, "Origins:"); err != nil {
+			return err
+		}
+		for _, origin := range result.Origins {
+			if _, err := fmt.Fprintf(w, "  - %s\n", origin); err != nil {
+				return err
+			}
+		}
+	}
+	if _, err := fmt.Fprintf(w, "Status: 2xx=%d 3xx=%d 4xx=%d 5xx=%d\n", result.Status2xx, result.Status3xx, result.Status4xx, result.Status5xx); err != nil {
+		return err
+	}
+	if result.HasDurations {
+		if _, err := fmt.Fprintf(w, "Duration: avg=%dms min=%dms max=%dms\n", result.AverageDurationMS, result.MinDurationMS, result.MaxDurationMS); err != nil {
+			return err
+		}
+	} else {
+		if _, err := fmt.Fprintln(w, "Duration: no requests captured"); err != nil {
+			return err
+		}
+	}
+	_, err := fmt.Fprintf(w, "Timeline: %s\n", timelinePath)
+	return err
 }
