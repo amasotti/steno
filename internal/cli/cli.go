@@ -153,11 +153,15 @@ func runInspect(args []string, stdout io.Writer) error {
 	}
 
 	for _, event := range events {
-		if event.Kind != timeline.KindCall {
-			continue
-		}
-		if _, err := fmt.Fprintf(stdout, "%04d  %d  %s  %s%s\n", event.Seq, event.Status, event.Method, event.Origin, event.Path); err != nil {
-			return err
+		switch event.Kind {
+		case timeline.KindCall:
+			if _, err := fmt.Fprintf(stdout, "%04d  %d  %s  %s%s\n", event.Seq, event.Status, event.Method, event.Origin, event.Path); err != nil {
+				return err
+			}
+		case timeline.KindNavigation:
+			if _, err := fmt.Fprintf(stdout, "%04d  nav  %s%s\n", event.Seq, event.Origin, event.Path); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

@@ -24,11 +24,15 @@ func Mermaid(w io.Writer, events []timeline.Event) error {
 	}
 
 	for _, event := range events {
-		if event.Kind != timeline.KindCall {
-			continue
-		}
-		if _, err := fmt.Fprintf(w, "  User->>%s: %s %s (%d)\n", participantName(event.Origin), event.Method, event.Path, event.Status); err != nil {
-			return err
+		switch event.Kind {
+		case timeline.KindCall:
+			if _, err := fmt.Fprintf(w, "  User->>%s: %s %s (%d)\n", participantName(event.Origin), event.Method, event.Path, event.Status); err != nil {
+				return err
+			}
+		case timeline.KindNavigation:
+			if _, err := fmt.Fprintf(w, "  Note over User: navigate %s%s\n", event.Origin, event.Path); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

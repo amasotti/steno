@@ -2,6 +2,7 @@ package cdp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/url"
 	"sync"
@@ -10,29 +11,29 @@ import (
 
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 
 	"github.com/amasotti/steno/internal/filter"
-	"github.com/amasotti/steno/internal/payload"
 	"github.com/amasotti/steno/internal/timeline"
 )
 
 type Recorder struct {
-	URL      string
-	Filter   *filter.Filter
-	Payloads *payload.Store
+	URL              string
+	Filter           *filter.Filter
+	IncludeDocuments bool
 }
 
 type requestSnapshot struct {
-	Sequence    int
-	Method      string
-	URL         string
-	Status      int
-	Start       time.Time
-	End         time.Time
-	Size        int
-	RequestRef  string
-	ResponseRef string
+	Sequence        int
+	Method          string
+	URL             string
+	Status          int
+	Start           time.Time
+	End             time.Time
+	Size            int
+	RequestPayload  json.RawMessage
+	ResponsePayload json.RawMessage
 }
 
 type trackedRequest struct {
@@ -52,8 +53,8 @@ type payloadWork struct {
 	event timeline.Event
 }
 
-func New(rawURL string, f *filter.Filter, payloads *payload.Store) *Recorder {
-	return &Recorder{URL: rawURL, Filter: f, Payloads: payloads}
+func New(rawURL string, f *filter.Filter, includeDocuments bool) *Recorder {
+	return &Recorder{URL: rawURL, Filter: f, IncludeDocuments: includeDocuments}
 }
 
 func (r *Recorder) Record(ctx context.Context) (<-chan timeline.Event, <-chan error) {
@@ -90,8 +91,10 @@ func (r *Recorder) record(parent context.Context, events chan<- timeline.Event) 
 		for {
 			select {
 			case work := <-payloads:
-				work.event.RequestRef = r.saveRequestBody(ctx, work.event.Seq, work.req)
-				work.event.ResponseRef = r.saveResponseBody(ctx, work.event.Seq, work.req)
+				if work.req != nil {
+					work.event.RequestPayload = r.requestPayload(ctx, work.req)
+					work.event.ResponsePayload = r.responsePayload(ctx, work.req)
+				}
 
 				select {
 				case events <- work.event:
@@ -106,6 +109,21 @@ func (r *Recorder) record(parent context.Context, events chan<- timeline.Event) 
 
 	chromedp.ListenTarget(ctx, func(ev any) {
 		switch ev := ev.(type) {
+		case *page.EventFrameNavigated:
+			// Only top-frame navigations anchor the journey; sub-frames are noise.
+			if ev.Frame == nil || ev.Frame.ParentID != "" {
+				return
+			}
+			event, ok := navigationEvent(ev.Frame.URL)
+			if !ok {
+				return
+			}
+			event.Seq = int(sequence.Add(1))
+
+			select {
+			case payloads <- payloadWork{event: event}:
+			case <-parent.Done():
+			}
 		case *network.EventRequestWillBeSent:
 			mu.Lock()
 			requests[ev.RequestID] = &trackedRequest{
@@ -162,6 +180,7 @@ func (r *Recorder) record(parent context.Context, events chan<- timeline.Event) 
 
 	actions := []chromedp.Action{
 		network.Enable(),
+		page.Enable(),
 	}
 	if r.URL != "" {
 		actions = append(actions, chromedp.Navigate(r.URL))
@@ -186,17 +205,34 @@ func snapshotToEvent(snapshot requestSnapshot) (timeline.Event, bool) {
 	}
 
 	return timeline.Event{
-		Seq:         snapshot.Sequence,
-		Time:        snapshot.Start,
-		Kind:        timeline.KindCall,
-		Origin:      parsed.Scheme + "://" + parsed.Host,
-		Method:      snapshot.Method,
-		Path:        pathWithQuery(parsed),
-		Status:      snapshot.Status,
-		DurationMS:  int(snapshot.End.Sub(snapshot.Start).Milliseconds()),
-		SizeBytes:   snapshot.Size,
-		RequestRef:  snapshot.RequestRef,
-		ResponseRef: snapshot.ResponseRef,
+		Seq:             snapshot.Sequence,
+		Time:            snapshot.Start,
+		Kind:            timeline.KindCall,
+		Origin:          parsed.Scheme + "://" + parsed.Host,
+		Method:          snapshot.Method,
+		Path:            pathWithQuery(parsed),
+		Status:          snapshot.Status,
+		DurationMS:      int(snapshot.End.Sub(snapshot.Start).Milliseconds()),
+		SizeBytes:       snapshot.Size,
+		RequestPayload:  snapshot.RequestPayload,
+		ResponsePayload: snapshot.ResponsePayload,
+	}, true
+}
+
+// navigationEvent normalizes a top-frame navigation URL into a navigation
+// event. URLs without a scheme and host (e.g. "about:blank") are rejected so
+// the initial blank page does not pollute the journey.
+func navigationEvent(rawURL string) (timeline.Event, bool) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return timeline.Event{}, false
+	}
+
+	return timeline.Event{
+		Time:   time.Now().UTC(),
+		Kind:   timeline.KindNavigation,
+		Origin: parsed.Scheme + "://" + parsed.Host,
+		Path:   pathWithQuery(parsed),
 	}, true
 }
 
@@ -211,32 +247,35 @@ func pathWithQuery(parsed *url.URL) string {
 	return path
 }
 
-func (r *Recorder) saveRequestBody(ctx context.Context, seq int, req *trackedRequest) string {
-	if r.Payloads == nil || !req.hasPostData {
-		return ""
+func inlineJSONPayload(body []byte) json.RawMessage {
+	if len(body) == 0 || !json.Valid(body) {
+		return nil
+	}
+	return json.RawMessage(body)
+}
+
+func (r *Recorder) shouldCapturePayload(resourceType string) bool {
+	return resourceType != string(network.ResourceTypeDocument) || r.IncludeDocuments
+}
+
+func (r *Recorder) requestPayload(ctx context.Context, req *trackedRequest) json.RawMessage {
+	if !req.hasPostData || !r.shouldCapturePayload(string(req.resourceType)) {
+		return nil
 	}
 	body, err := network.GetRequestPostData(req.requestID).Do(cdp.WithExecutor(ctx, chromedp.FromContext(ctx).Target))
 	if err != nil {
-		return ""
+		return nil
 	}
-	ref, err := r.Payloads.Save(seq, payload.KindRequest, body)
-	if err != nil {
-		return ""
-	}
-	return ref
+	return inlineJSONPayload(body)
 }
 
-func (r *Recorder) saveResponseBody(ctx context.Context, seq int, req *trackedRequest) string {
-	if r.Payloads == nil {
-		return ""
+func (r *Recorder) responsePayload(ctx context.Context, req *trackedRequest) json.RawMessage {
+	if !r.shouldCapturePayload(string(req.resourceType)) {
+		return nil
 	}
 	body, err := network.GetResponseBody(req.requestID).Do(cdp.WithExecutor(ctx, chromedp.FromContext(ctx).Target))
 	if err != nil {
-		return ""
+		return nil
 	}
-	ref, err := r.Payloads.Save(seq, payload.KindResponse, body)
-	if err != nil {
-		return ""
-	}
-	return ref
+	return inlineJSONPayload(body)
 }
