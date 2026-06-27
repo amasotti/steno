@@ -91,8 +91,17 @@ func Find(events []timeline.Event, seq int) (timeline.Event, bool) {
 
 // ReadArtifact reads a payload or header side-file referenced from the timeline
 // (e.g. "payloads/0005-res.txt"), resolved relative to the run directory.
+//
+// The ref comes from timeline.jsonl, which may be attacker-supplied (recordings
+// are a sharing format). A ref like "../secret" must not escape the run dir, so
+// the resolved path is confined to runDir before any read.
 func ReadArtifact(runDir, ref string) ([]byte, error) {
-	body, err := os.ReadFile(filepath.Join(runDir, filepath.FromSlash(ref)))
+	resolved := filepath.Join(runDir, filepath.FromSlash(ref))
+	rel, err := filepath.Rel(runDir, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("artifact %q escapes the run directory", ref)
+	}
+	body, err := os.ReadFile(resolved)
 	if err != nil {
 		return nil, fmt.Errorf("read artifact %q: %w", ref, err)
 	}

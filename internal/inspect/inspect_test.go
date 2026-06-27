@@ -3,6 +3,7 @@ package inspect
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/amasotti/steno/internal/timeline"
@@ -108,6 +109,24 @@ func TestReadArtifactResolvesRelativeToRunDir(t *testing.T) {
 
 	if _, err := ReadArtifact(runDir, "payloads/missing.txt"); err == nil {
 		t.Fatal("ReadArtifact for missing file returned nil error")
+	}
+}
+
+func TestReadArtifactRejectsTraversal(t *testing.T) {
+	runDir := t.TempDir()
+	secret := filepath.Join(filepath.Dir(runDir), "secret.txt")
+	if err := os.WriteFile(secret, []byte("TOP-SECRET"), 0o600); err != nil {
+		t.Fatalf("write secret: %v", err)
+	}
+
+	for _, ref := range []string{"../secret.txt", "../../etc/hosts", "payloads/../../secret.txt"} {
+		body, err := ReadArtifact(runDir, ref)
+		if err == nil {
+			t.Fatalf("ReadArtifact(%q) returned no error, leaked: %s", ref, body)
+		}
+		if !strings.Contains(err.Error(), "escapes the run directory") {
+			t.Fatalf("ReadArtifact(%q) error = %v, want escape error", ref, err)
+		}
 	}
 }
 
