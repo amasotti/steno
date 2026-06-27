@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"io"
 )
@@ -14,7 +16,7 @@ func Run(_ context.Context, args []string, stdout io.Writer, _ io.Writer) error 
 
 	switch args[0] {
 	case "record":
-		_, err := fmt.Fprintln(stdout, "record: not implemented yet")
+		_, err := parseRecord(args[1:])
 		return err
 	case "inspect":
 		_, err := fmt.Fprintln(stdout, "inspect: not implemented yet")
@@ -36,4 +38,32 @@ func usage() string {
   steno inspect ./runs/<name>
   steno render ./runs/<name>
 `
+}
+
+type RecordOptions struct {
+	URL string
+	Out string
+}
+
+func parseRecord(args []string) (RecordOptions, error) {
+	flags := flag.NewFlagSet("record", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+
+	var opts RecordOptions
+	flags.StringVar(&opts.URL, "url", "", "URL to record")
+	flags.StringVar(&opts.Out, "out", "", "Output directory for the recording")
+
+	if err := flags.Parse(args); err != nil {
+		return RecordOptions{}, err
+	}
+
+	if opts.Out == "" {
+		return RecordOptions{}, errors.New("missing --out")
+	}
+
+	if flags.NArg() != 0 {
+		return RecordOptions{}, errors.New("positional arguments not supported")
+	}
+
+	return opts, nil
 }
