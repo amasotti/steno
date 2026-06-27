@@ -263,7 +263,7 @@ func showInspectDetail(stdout io.Writer, runDir string, event timeline.Event) er
 		if err != nil {
 			return err
 		}
-		if _, err := fmt.Fprintf(stdout, "\n%s %s\n%s\n", styleHeader(s.label), stylePath("("+s.ref+")"), body); err != nil {
+		if _, err := fmt.Fprintf(stdout, "\n%s %s\n%s\n", styleHeader(s.label), stylePath("("+s.ref+"):"), body); err != nil {
 			return err
 		}
 	}
@@ -370,38 +370,44 @@ func runRender(args []string, stdout io.Writer) error {
 }
 
 func printSessionSummary(w io.Writer, result summary.Summary, timelinePath string) error {
-	if _, err := fmt.Fprintln(w, "Session summary"); err != nil {
+	if _, err := fmt.Fprintln(w, styleHeader("Session summary")); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(w, "Calls: %d\n", result.TotalCalls); err != nil {
+	if _, err := fmt.Fprintf(w, "%s %d\n", styleLabel("Calls:"), result.TotalCalls); err != nil {
 		return err
 	}
 	if len(result.Origins) == 0 {
-		if _, err := fmt.Fprintln(w, "Origins: none"); err != nil {
+		if _, err := fmt.Fprintf(w, "%s none\n", styleLabel("Origins:")); err != nil {
 			return err
 		}
 	} else {
-		if _, err := fmt.Fprintln(w, "Origins:"); err != nil {
+		if _, err := fmt.Fprintln(w, styleLabel("Origins:")); err != nil {
 			return err
 		}
 		for _, origin := range result.Origins {
-			if _, err := fmt.Fprintf(w, "  - %s\n", origin); err != nil {
+			if _, err := fmt.Fprintf(w, "  - %s\n", stylePath(origin)); err != nil {
 				return err
 			}
 		}
 	}
-	if _, err := fmt.Fprintf(w, "Status: 2xx=%d 3xx=%d 4xx=%d 5xx=%d\n", result.Status2xx, result.Status3xx, result.Status4xx, result.Status5xx); err != nil {
+	if _, err := fmt.Fprintf(w, "%s %s %s %s %s\n",
+		styleLabel("Status:"),
+		styleStatus(200, fmt.Sprintf("2xx=%d", result.Status2xx)),
+		styleStatus(300, fmt.Sprintf("3xx=%d", result.Status3xx)),
+		styleStatus(400, fmt.Sprintf("4xx=%d", result.Status4xx)),
+		styleStatus(500, fmt.Sprintf("5xx=%d", result.Status5xx)),
+	); err != nil {
 		return err
 	}
 	if result.HasDurations {
-		if _, err := fmt.Fprintf(w, "Duration: avg=%dms min=%dms max=%dms\n", result.AverageDurationMS, result.MinDurationMS, result.MaxDurationMS); err != nil {
+		if _, err := fmt.Fprintf(w, "%s avg=%dms min=%dms max=%dms\n", styleLabel("Duration:"), result.AverageDurationMS, result.MinDurationMS, result.MaxDurationMS); err != nil {
 			return err
 		}
 	} else {
-		if _, err := fmt.Fprintln(w, "Duration: no requests captured"); err != nil {
+		if _, err := fmt.Fprintf(w, "%s no requests captured\n", styleLabel("Duration:")); err != nil {
 			return err
 		}
 	}
-	_, err := fmt.Fprintf(w, "Timeline: %s\n", timelinePath)
+	_, err := fmt.Fprintf(w, "%s %s\n", styleLabel("Timeline:"), stylePath(timelinePath))
 	return err
 }
