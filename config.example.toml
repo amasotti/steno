@@ -7,10 +7,10 @@
 # running `steno record` with no --config reproduces the default behavior. An
 # explicit --url on the command line overrides start_url below.
 #
-# NOTE: Only [target].start_url and the [filter] section take effect today. The
-# other sections are parsed and reserved for later slices (payload capture,
-# redaction, fact extraction, correlation, supplemental sources); they are
-# shown here as commented examples and currently have no effect.
+# NOTE: [target].start_url, [filter], and [payload] take effect today. Later
+# sections are parsed and reserved for future slices (fact extraction,
+# correlation, supplemental sources); they are shown here as commented examples
+# and currently have no effect.
 
 [target]
 mode = "launch"                       # launch | attach  (only launch is used today)
@@ -43,11 +43,14 @@ deny_paths = [
 # Drop CORS preflight requests (method == OPTIONS). Default: true.
 drop_preflight = true
 
-# --- Reserved for later slices (parsed, not yet applied) -----------------------
+[payload]
+# Request/response payloads for kept calls are written as side files under
+# payloads/ and referenced from timeline.jsonl. Document bodies (usually HTML)
+# are skipped by default to keep the artifacts useful. Set this true only when
+# debugging a page document response itself.
+include_documents = false
 
-# [redact]
-# mask_fields = ["password", "otp", "token"]   # never written to disk
-# max_payload_bytes = 8192                      # truncate larger payloads
+# --- Reserved for later slices (parsed, not yet applied) -----------------------
 
 # [correlation]
 # header = "traceparent"                        # join key shared with backend planes
@@ -57,8 +60,3 @@ drop_preflight = true
 # from = "response"                             # request | response
 # json_path = "$.user.id"                       # value to pull out
 # as = "user_uuid"                              # name it gets in the timeline
-
-# [[supplemental]]
-# name = "mailpit-otp"
-# url = "http://localhost:8025/api/v1/messages"
-# extract_otp = "$.messages[0].Snippet"

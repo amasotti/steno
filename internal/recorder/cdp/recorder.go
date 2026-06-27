@@ -2,7 +2,6 @@ package cdp
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/url"
 	"sync"
@@ -15,25 +14,27 @@ import (
 	"github.com/chromedp/chromedp"
 
 	"github.com/amasotti/steno/internal/filter"
+	"github.com/amasotti/steno/internal/payload"
 	"github.com/amasotti/steno/internal/timeline"
 )
 
 type Recorder struct {
 	URL              string
 	Filter           *filter.Filter
+	Payloads         *payload.Store
 	IncludeDocuments bool
 }
 
 type requestSnapshot struct {
-	Sequence        int
-	Method          string
-	URL             string
-	Status          int
-	Start           time.Time
-	End             time.Time
-	Size            int
-	RequestPayload  json.RawMessage
-	ResponsePayload json.RawMessage
+	Sequence    int
+	Method      string
+	URL         string
+	Status      int
+	Start       time.Time
+	End         time.Time
+	Size        int
+	RequestRef  string
+	ResponseRef string
 }
 
 type trackedRequest struct {
@@ -53,8 +54,8 @@ type payloadWork struct {
 	event timeline.Event
 }
 
-func New(rawURL string, f *filter.Filter, includeDocuments bool) *Recorder {
-	return &Recorder{URL: rawURL, Filter: f, IncludeDocuments: includeDocuments}
+func New(rawURL string, f *filter.Filter, payloads *payload.Store, includeDocuments bool) *Recorder {
+	return &Recorder{URL: rawURL, Filter: f, Payloads: payloads, IncludeDocuments: includeDocuments}
 }
 
 func (r *Recorder) Record(ctx context.Context) (<-chan timeline.Event, <-chan error) {
@@ -92,8 +93,8 @@ func (r *Recorder) record(parent context.Context, events chan<- timeline.Event) 
 			select {
 			case work := <-payloads:
 				if work.req != nil {
-					work.event.RequestPayload = r.requestPayload(ctx, work.req)
-					work.event.ResponsePayload = r.responsePayload(ctx, work.req)
+					work.event.RequestRef = r.saveRequestBody(ctx, work.event.Seq, work.req)
+					work.event.ResponseRef = r.saveResponseBody(ctx, work.event.Seq, work.req)
 				}
 
 				select {
@@ -205,17 +206,17 @@ func snapshotToEvent(snapshot requestSnapshot) (timeline.Event, bool) {
 	}
 
 	return timeline.Event{
-		Seq:             snapshot.Sequence,
-		Time:            snapshot.Start,
-		Kind:            timeline.KindCall,
-		Origin:          parsed.Scheme + "://" + parsed.Host,
-		Method:          snapshot.Method,
-		Path:            pathWithQuery(parsed),
-		Status:          snapshot.Status,
-		DurationMS:      int(snapshot.End.Sub(snapshot.Start).Milliseconds()),
-		SizeBytes:       snapshot.Size,
-		RequestPayload:  snapshot.RequestPayload,
-		ResponsePayload: snapshot.ResponsePayload,
+		Seq:         snapshot.Sequence,
+		Time:        snapshot.Start,
+		Kind:        timeline.KindCall,
+		Origin:      parsed.Scheme + "://" + parsed.Host,
+		Method:      snapshot.Method,
+		Path:        pathWithQuery(parsed),
+		Status:      snapshot.Status,
+		DurationMS:  int(snapshot.End.Sub(snapshot.Start).Milliseconds()),
+		SizeBytes:   snapshot.Size,
+		RequestRef:  snapshot.RequestRef,
+		ResponseRef: snapshot.ResponseRef,
 	}, true
 }
 
@@ -247,35 +248,36 @@ func pathWithQuery(parsed *url.URL) string {
 	return path
 }
 
-func inlineJSONPayload(body []byte) json.RawMessage {
-	if len(body) == 0 || !json.Valid(body) {
-		return nil
-	}
-	return json.RawMessage(body)
-}
-
 func (r *Recorder) shouldCapturePayload(resourceType string) bool {
 	return resourceType != string(network.ResourceTypeDocument) || r.IncludeDocuments
 }
 
-func (r *Recorder) requestPayload(ctx context.Context, req *trackedRequest) json.RawMessage {
-	if !req.hasPostData || !r.shouldCapturePayload(string(req.resourceType)) {
-		return nil
+func (r *Recorder) saveRequestBody(ctx context.Context, seq int, req *trackedRequest) string {
+	if r.Payloads == nil || !req.hasPostData || !r.shouldCapturePayload(string(req.resourceType)) {
+		return ""
 	}
 	body, err := network.GetRequestPostData(req.requestID).Do(cdp.WithExecutor(ctx, chromedp.FromContext(ctx).Target))
 	if err != nil {
-		return nil
+		return ""
 	}
-	return inlineJSONPayload(body)
+	ref, err := r.Payloads.Save(seq, payload.KindRequest, body)
+	if err != nil {
+		return ""
+	}
+	return ref
 }
 
-func (r *Recorder) responsePayload(ctx context.Context, req *trackedRequest) json.RawMessage {
-	if !r.shouldCapturePayload(string(req.resourceType)) {
-		return nil
+func (r *Recorder) saveResponseBody(ctx context.Context, seq int, req *trackedRequest) string {
+	if r.Payloads == nil || !r.shouldCapturePayload(string(req.resourceType)) {
+		return ""
 	}
 	body, err := network.GetResponseBody(req.requestID).Do(cdp.WithExecutor(ctx, chromedp.FromContext(ctx).Target))
 	if err != nil {
-		return nil
+		return ""
 	}
-	return inlineJSONPayload(body)
+	ref, err := r.Payloads.Save(seq, payload.KindResponse, body)
+	if err != nil {
+		return ""
+	}
+	return ref
 }

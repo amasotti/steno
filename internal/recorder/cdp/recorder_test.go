@@ -1,10 +1,10 @@
 package cdp
 
 import (
-	"encoding/json"
 	"testing"
 	"time"
 
+	"github.com/amasotti/steno/internal/payload"
 	"github.com/amasotti/steno/internal/timeline"
 )
 
@@ -13,15 +13,15 @@ func TestSnapshotToEventNormalizesURLAndDuration(t *testing.T) {
 	end := start.Add(150 * time.Millisecond)
 
 	event, ok := snapshotToEvent(requestSnapshot{
-		Sequence:        7,
-		Method:          "POST",
-		URL:             "https://example.test/api/users?debug=true",
-		Status:          201,
-		Start:           start,
-		End:             end,
-		Size:            1234,
-		RequestPayload:  json.RawMessage(`{"username":"admin"}`),
-		ResponsePayload: json.RawMessage(`{"ok":true}`),
+		Sequence:    7,
+		Method:      "POST",
+		URL:         "https://example.test/api/users?debug=true",
+		Status:      201,
+		Start:       start,
+		End:         end,
+		Size:        1234,
+		RequestRef:  "payloads/0007-req.txt",
+		ResponseRef: "payloads/0007-res.txt",
 	})
 
 	if !ok {
@@ -42,25 +42,16 @@ func TestSnapshotToEventNormalizesURLAndDuration(t *testing.T) {
 	if event.SizeBytes != 1234 {
 		t.Fatalf("SizeBytes = %d, want 1234", event.SizeBytes)
 	}
-	if string(event.RequestPayload) != `{"username":"admin"}` {
-		t.Fatalf("RequestPayload = %s, want request JSON", event.RequestPayload)
+	if event.RequestRef != "payloads/0007-req.txt" {
+		t.Fatalf("RequestRef = %q, want payloads/0007-req.txt", event.RequestRef)
 	}
-	if string(event.ResponsePayload) != `{"ok":true}` {
-		t.Fatalf("ResponsePayload = %s, want response JSON", event.ResponsePayload)
-	}
-}
-
-func TestInlineJSONPayloadKeepsOnlyJSON(t *testing.T) {
-	if got := inlineJSONPayload([]byte(`{"ok":true}`)); string(got) != `{"ok":true}` {
-		t.Fatalf("inlineJSONPayload(JSON) = %s, want original JSON", got)
-	}
-	if got := inlineJSONPayload([]byte(`<html></html>`)); got != nil {
-		t.Fatalf("inlineJSONPayload(HTML) = %s, want nil", got)
+	if event.ResponseRef != "payloads/0007-res.txt" {
+		t.Fatalf("ResponseRef = %q, want payloads/0007-res.txt", event.ResponseRef)
 	}
 }
 
 func TestShouldCapturePayloadSkipsDocumentsByDefault(t *testing.T) {
-	recorder := New("", nil, false)
+	recorder := New("", nil, payload.NewStore(t.TempDir()), false)
 
 	if recorder.shouldCapturePayload("Document") {
 		t.Fatal("document payload should be skipped by default")

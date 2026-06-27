@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,14 +13,14 @@ import (
 
 func TestRecordWritesTimelineJSONL(t *testing.T) {
 	restore := stubRecorderFactory(t, []timeline.Event{{
-		Seq:             1,
-		Kind:            timeline.KindCall,
-		Origin:          "https://example.test",
-		Method:          "GET",
-		Path:            "/api",
-		Status:          200,
-		RequestPayload:  json.RawMessage(`{"username":"admin"}`),
-		ResponsePayload: json.RawMessage(`{"ok":true}`),
+		Seq:         1,
+		Kind:        timeline.KindCall,
+		Origin:      "https://example.test",
+		Method:      "GET",
+		Path:        "/api",
+		Status:      200,
+		RequestRef:  "payloads/0001-req.txt",
+		ResponseRef: "payloads/0001-res.txt",
 	}})
 	defer restore()
 
@@ -39,7 +38,7 @@ func TestRecordWritesTimelineJSONL(t *testing.T) {
 		t.Fatalf("read timeline: %v", err)
 	}
 	got := string(content)
-	for _, want := range []string{`"kind":"call"`, `"path":"/api"`, `"request_payload":{"username":"admin"}`, `"response_payload":{"ok":true}`} {
+	for _, want := range []string{`"kind":"call"`, `"path":"/api"`, `"request_ref":"payloads/0001-req.txt"`, `"response_ref":"payloads/0001-res.txt"`} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("timeline content = %q, want it to contain %q", got, want)
 		}

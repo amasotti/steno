@@ -30,10 +30,12 @@ CDP details must not leak past the recorder implementation into timeline, inspec
 - Every behavior slice ships with the smallest useful tests.
 - Run checks through `just`: `just fmt`, `just test`, `just build`.
 - Do not claim anything passes without running the command and reading the output.
+- Agents never run browser smoke tests or launch browser/external GUI programs themselves. Ask the
+  maintainer to run those checks and report the output. The boundary is executing the external
+  browser program; unit tests, build, lint, and pure CLI commands stay agent-run.
 
 ## Documentation
 
 - Multi-step procedures belong in `docs/` or `docs/runbooks/`, not only chat.
 - Use Mermaid for diagrams.
 - Do not put phase-status copy in the README; use `.pairing/PLAN.md`.
-
