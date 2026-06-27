@@ -1,0 +1,16 @@
+.DS_Store
+bin/
+dist/
+/steno
+coverage.out
+*.test
+.cache/
+
+# Local Steno output.
+runs/
+.steno/
+
+.idea/
+.vscode/
+
+.pairing/
