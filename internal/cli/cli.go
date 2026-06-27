@@ -86,7 +86,7 @@ func parseRecord(args []string) (RecordOptions, error) {
 }
 
 func runRecord(ctx context.Context, opts RecordOptions, stdout io.Writer) error {
-	if err := os.MkdirAll(opts.Out, 0o755); err != nil {
+	if err := os.MkdirAll(opts.Out, 0o750); err != nil {
 		return fmt.Errorf("create output directory: %w", err)
 	}
 
@@ -105,12 +105,12 @@ func runRecord(ctx context.Context, opts RecordOptions, stdout io.Writer) error 
 		}
 		recorded = append(recorded, event)
 	}
-	return printSessionSummary(stdout, summary.FromEvents(recorded), timelinePath)
 
 	if err, ok := <-errs; ok && err != nil {
 		return err
 	}
-	return nil
+
+	return printSessionSummary(stdout, summary.FromEvents(recorded), timelinePath)
 }
 
 func runInspect(args []string, stdout io.Writer) error {

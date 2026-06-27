@@ -37,7 +37,7 @@ func WriteJSONL(w io.Writer, event Event) error {
 	if err != nil {
 		return err
 	}
-	if _, err := w.Write(encoded); err != nil {
+	if _, err = w.Write(encoded); err != nil {
 		return err
 	}
 	_, err = w.Write([]byte("\n"))
