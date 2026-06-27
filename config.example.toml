@@ -6,14 +6,8 @@
 # Everything here is optional: omitted keys keep Steno's built-in defaults, and
 # running `steno record` with no --config reproduces the default behavior. An
 # explicit --url on the command line overrides start_url below.
-#
-# NOTE: [target].start_url, [filter], and [payload] take effect today. Later
-# sections are parsed and reserved for future slices (fact extraction,
-# correlation, supplemental sources); they are shown here as commented examples
-# and currently have no effect.
 
 [target]
-mode = "launch"                       # launch | attach  (only launch is used today)
 browser = "chrome"                    # chrome | edge | brave | ...
 start_url = "https://app.example.com" # where the headful browser opens
 
@@ -50,14 +44,3 @@ drop_preflight = true
 # debugging a page document response itself.
 include_documents = false
 include_headers = true
-
-# --- Reserved for later slices (parsed, not yet applied) -----------------------
-
-# [correlation]
-# header = "traceparent"                        # join key shared with backend planes
-
-# [[extract]]
-# when_path = "/api/confirm"                    # endpoint to match
-# from = "response"                             # request | response
-# json_path = "$.user.id"                       # value to pull out
-# as = "user_uuid"                              # name it gets in the timeline

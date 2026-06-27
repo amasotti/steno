@@ -1,8 +1,7 @@
 # Steno — Behavioral Specification
 
 This is the behavioral source of truth for Steno: what it does, what it deliberately does not do, the
-event model it produces, and the CLI surface. It describes the **shipped** tool. Anything reserved for
-future work is called out explicitly in [§9](#9-reserved-and-out-of-scope).
+event model it produces, and the CLI surface. It describes the **shipped** tool.
 
 For the *why* behind the structure — package boundaries, contracts, design choices — see
 [`architecture.md`](./architecture.md). For day-to-day usage, see the [README](../README.md).
@@ -177,32 +176,10 @@ All derived from one canonical timeline:
 `record` and `render` are separate so rendering can be iterated without re-recording. `<run>` accepts
 either a run directory or a path to a `timeline.jsonl`.
 
-## 9. Reserved and out-of-scope
-
-### Reserved — parsed but not yet wired
-
-These config sections are accepted (the parser is forward-compatible) but currently have **no effect**.
-The struct fields are left declared so a future slice can implement them without a schema change:
-
-- `[target].mode = "attach"`, `[target].attach_url`, `[target].profile_dir` — **attach-to-running** was
-  evaluated and dropped: Chrome 136+ refuses remote-debugging flags on the default profile, so attach
-  can never target the user's everyday browser with real sessions. Launch covers the realistic
-  workflow.
-- `[correlation].header` — capturing a join key (e.g. `traceparent`) shared with backend planes. Cheap
-  and general, so parked rather than cut; the `Event.Correlation` field stays in the schema.
-- `[[extract]]` — config-driven named-fact extraction (endpoint + JSON path → named timeline value).
-  Needs per-app config and duplicates the full payload side-files; revisit for a repeated-regression
-  workflow.
-- `[[supplemental]]` — polling an external HTTP source (e.g. a Mailpit OTP) and folding it into the
-  timeline. The most complex piece, niche value.
-
-The `console`, `fact`, and `supplemental` event kinds exist in the model but are not emitted yet.
-
-### Out of scope (non-goals)
+## 9. Non-goals (the YAGNI boundary)
 
 - **Chromium family only.** Steno talks CDP (Chrome, Edge, Brave, Opera, …). Non-Chromium engines
-  (Firefox/WebDriver BiDi, Safari/WebKit) are out of scope; the recorder seam keeps that door open
-  cheaply (see architecture).
+  (Firefox/WebDriver BiDi, Safari/WebKit) are out of scope.
 - **Not a deep network profiler.** Origin, path, method, status, payloads, basic stats — not full
   timing waterfalls or HAR-level detail.
 - **No literal user-input capture.** CDP cannot observe real clicks/keystrokes and Steno injects no
@@ -218,7 +195,7 @@ The `console`, `fact`, and `supplemental` event kinds exist in the model but are
 
 - **Name:** Steno.
 - **Protocol / browsers:** CDP, Chromium family only. Firefox/Safari out of scope.
-- **Connection:** launch-managed only (attach dropped, see §9).
+- **Connection:** launch a managed headful browser; the human drives it.
 - **User actions:** no JS injection, no click/keystroke capture; journey from navigation + network.
 - **Config format:** TOML, lenient on unknown keys.
 - **Detail level:** origin, path, method, status, full payloads, basic stats — no full headers by

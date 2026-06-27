@@ -31,13 +31,12 @@ These are the load-bearing constraints. Violating one is a bug even if it compil
 
 1. **No CDP type leaks past `internal/recorder/cdp`.** Everything downstream speaks `timeline.Event`
    and plain strings. This seam is what keeps `filter`, `inspect`, `render`, and `replay` testable
-   without a browser, and is where a future non-Chromium backend would slot in. If you find yourself
-   importing `chromedp`/`cdproto` outside that package, stop and rethink.
+   without a browser. If you find yourself importing `chromedp`/`cdproto` outside that package, stop
+   and rethink.
 2. **No redaction, masking, or truncation.** Full fidelity (including test credentials, tokens,
    cookies, complete payloads) is a deliberate, permanent design choice. It is not a missing feature;
 3. **The `timeline.jsonl` schema is additive.** New optional fields are fine; never repurpose or remove
-   an existing field's meaning. Reserved features keep their fields declared rather than reshaping the
-   record later.
+   an existing field's meaning, since recordings and agents on disk depend on it.
 4. **The record path stays LLM-free and self-sufficient.** No network calls home, no analysis in the
    binary. The debug port binds to localhost.
 5. **One responsibility per package**, dependencies pointing inward to `timeline`. If a new concern
@@ -88,7 +87,3 @@ you ran `just test` and saw it succeed.
 | Mermaid rendering | `internal/render` |
 | curl replay | `internal/replay` |
 | Session summary | `internal/summary` |
-
-Reserved-but-unwired surfaces (attach mode, `[correlation]`, `[[extract]]`, `[[supplemental]]`, and the
-`console`/`fact`/`supplemental` event kinds) are documented in [`docs/spec.md`](docs/spec.md#9-reserved-and-out-of-scope).
-If you implement one, wire it behind its existing config/struct fields and update the spec.

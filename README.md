@@ -164,9 +164,7 @@ Everything is optional: with no `--config`, `steno record` reproduces sensible b
 single TOML file declares the launch target, the filters, and the payload policy. Copy the example
 and adapt it.
 
-See [`config.example.toml`](config.example.toml) for every key, with comments. The `[correlation]`,
-`[[extract]]`, and `[[supplemental]]` sections are parsed but reserved for future work — they have
-no effect today.
+See [`config.example.toml`](config.example.toml) for every key, with comments.
 
 ## Documentation
 

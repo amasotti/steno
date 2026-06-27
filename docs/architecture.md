@@ -70,13 +70,9 @@ channel into `timeline.WriteJSONL`, hands kept calls' bodies to the payload stor
 summary — all without knowing CDP exists.
 
 **The hard rule: no CDP type leaks past `internal/recorder/cdp`.** Resource types arrive as plain
-strings, navigations and calls arrive as `timeline.Event`. This is the seam that:
-
-- keeps `filter`, `inspect`, `render`, and `replay` trivially unit-testable without a browser, and
-- is exactly where a future WebDriver BiDi backend (Firefox) would slot in — a second implementation
-  of `Recorder`, with nothing downstream needing to change.
-
-It costs almost nothing today and is the cheapest insurance the design buys.
+strings, navigations and calls arrive as `timeline.Event`. This keeps `filter`, `inspect`, `render`,
+and `replay` trivially unit-testable without a browser, and keeps capture-protocol concerns from
+bleeding into the rest of the codebase.
 
 ### Inside the CDP recorder
 
@@ -103,14 +99,13 @@ object per line, ordered by `seq`. The `Event` struct:
 | --- | --- | --- |
 | `Seq` | `seq` | Monotonic sequence number, shared across `call` and `navigation`; preserves real order. |
 | `Time` | `ts` | Wall-clock timestamp (RFC 3339). |
-| `Kind` | `kind` | `navigation` or `call` today; `console` / `fact` / `supplemental` reserved. |
+| `Kind` | `kind` | `navigation` or `call`. |
 | `Origin` | `origin` | Scheme + host, e.g. `https://account.int.example`. |
 | `Method` | `method` | HTTP method (`call` only). |
 | `Path` | `path` | Path including query string (`call` only). |
 | `Status` | `status` | HTTP status code (`call` only). |
 | `DurationMS` | `duration_ms` | Derived from request/response timing. |
 | `SizeBytes` | `size_bytes` | Transferred response size. |
-| `Correlation` | `correlation` | Reserved join key (e.g. `traceparent`); see spec §9. |
 | `RequestRef` / `ResponseRef` | `request_ref` / `response_ref` | Relative paths to body side-files. |
 | `RequestHeadersRef` / `ResponseHeadersRef` | `request_headers_ref` / `response_headers_ref` | Relative paths to header side-files; present only when `include_headers` is on. |
 
@@ -120,9 +115,8 @@ Contract guarantees that downstream code and agents may rely on:
 - **Bodies live beside the timeline, never inside it.** Payloads are referenced by relative path, so
   the JSONL stays compact and bodies are never truncated.
 - **Empty fields are omitted** (`omitempty`), so a `navigation` line carries only what it has.
-- **The schema is additive.** New optional fields may appear; existing fields keep their meaning. This
-  is why reserved features (correlation, extract) leave their fields declared rather than changing the
-  shape later.
+- **The schema is additive.** New optional fields may appear; existing fields keep their meaning, so
+  recordings and agents on disk stay readable.
 
 ## 5. The payload store
 
@@ -143,14 +137,9 @@ the run directory.
   single static binaries with trivial cross-compilation. The headline distribution requirement —
   colleagues just download and run — falls out of Go for free.
 - **CDP, Chromium family only.** One protocol covers Chrome, Edge, Brave, Opera. Non-Chromium engines
-  are deliberately out of scope; the `Recorder` seam keeps the door open without committing to it.
-- **Launch only, no attach.** Chrome 136+ ignores `--remote-debugging-port` on the default profile, so
-  attach could only ever target a throwaway debug profile — never the user's everyday browser with
-  real sessions. That removes attach's only real advantage, so launch is the single supported path.
-  The attach config fields remain declared but unwired.
-- **Single-tab capture.** The MVP and current scope observe the launched tab. Multi-tab auto-attach
-  (`Target.setAutoAttach`) is a known next step that fits behind the same seam without disturbing the
-  timeline contract.
+  are deliberately out of scope.
+- **Launch a managed browser.** Steno launches a headful instance with a dedicated profile the human
+  drives. Capture is scoped to that tab.
 - **No redaction, ever.** Steno records test sessions on test data; credentials, tokens, and cookies
   are evidence, not liabilities. Masking is a permanent non-goal, not an unbuilt feature. Recordings
   are local artifacts the user owns.
