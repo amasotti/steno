@@ -1,0 +1,157 @@
+name: Release
+
+# Single combined pipeline on push to main:
+#   ci  -> run the reusable CI workflow (lint, test, build, vuln)
+#   tag -> compute the next semver from conventional commits and push the tag
+#   build -> cross-compile linux/amd64, darwin/arm64, windows/amd64
+#   release -> git-cliff changelog + GitHub Release with the binaries attached
+#
+# The tag is pushed with GITHUB_TOKEN. That deliberately does NOT re-trigger any
+# tag-listening workflow (anti-recursion) — everything happens in this one run,
+# so no PAT is needed.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  tag:
+    name: Compute and push tag
+    needs: ci
+    runs-on: ubuntu-latest
+    outputs:
+      new_version: ${{ steps.semver.outputs.next }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Get next version
+        id: semver
+        uses: ietf-tools/semver-action@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: main
+          minorList: "feat, feature, security"
+          patchList: "fix, bugfix, perf, refactor, test, tests, chore, ci, build"
+          # Empty string when there are no conventional commits since the last
+          # tag — every downstream step is guarded against that.
+          noNewCommitBehavior: "silent"
+
+      - name: Create and push tag
+        if: steps.semver.outputs.next != ''
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${{ steps.semver.outputs.next }}"
+          git push origin "${{ steps.semver.outputs.next }}"
+
+  build:
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: tag
+    if: needs.tag.outputs.new_version != ''
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            archive: tar.gz
+          - goos: darwin
+            goarch: arm64
+            archive: tar.gz
+          - goos: windows
+            goarch: amd64
+            archive: zip
+            ext: .exe
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ needs.tag.outputs.new_version }}
+        run: |
+          mkdir -p dist
+          go build -trimpath \
+            -ldflags "-s -w -X github.com/amasotti/steno/internal/cli.Version=${VERSION}" \
+            -o "dist/steno${{ matrix.ext }}" ./cmd/steno
+
+      - name: Archive
+        env:
+          VERSION: ${{ needs.tag.outputs.new_version }}
+        run: |
+          cd dist
+          name="steno_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}"
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            zip "${name}.zip" "steno${{ matrix.ext }}"
+          else
+            tar -czf "${name}.tar.gz" "steno${{ matrix.ext }}"
+          fi
+          rm -f "steno${{ matrix.ext }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: steno-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub release
+    needs: [tag, build]
+    if: needs.tag.outputs.new_version != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Generate changelog
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: .github/cliff.toml
+          args: --verbose --latest
+        env:
+          OUTPUT: CHANGES.md
+          GITHUB_REPO: ${{ github.repository }}
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum * > SHA256SUMS
+
+      - name: Create release
+        uses: ncipollo/release-action@v1
+        with:
+          allowUpdates: true
+          draft: false
+          makeLatest: true
+          tag: ${{ needs.tag.outputs.new_version }}
+          name: ${{ needs.tag.outputs.new_version }}
+          bodyFile: CHANGES.md
+          artifacts: "artifacts/*"
+          token: ${{ secrets.GITHUB_TOKEN }}

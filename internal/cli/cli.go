@@ -20,6 +20,11 @@ import (
 	"github.com/amasotti/steno/internal/timeline"
 )
 
+// Version is the build version, injected at release time via
+// -ldflags "-X github.com/amasotti/steno/internal/cli.Version=<tag>".
+// It stays "dev" for local and CI builds.
+var Version = "dev"
+
 type eventRecorder interface {
 	Record(context.Context) (<-chan timeline.Event, <-chan error)
 }
@@ -45,6 +50,9 @@ func Run(ctx context.Context, args []string, stdout io.Writer, _ io.Writer) erro
 		return runInspect(args[1:], stdout)
 	case "render":
 		return runRender(args[1:], stdout)
+	case "version", "-v", "--version":
+		_, err := fmt.Fprintf(stdout, "steno %s\n", Version)
+		return err
 	case "help", "-h", "--help":
 		_, err := fmt.Fprint(stdout, usage())
 		return err
@@ -58,6 +66,7 @@ func usage() string {
   steno record --out ./runs/<name> [--url https://example.com] [--config flow.toml]
   steno inspect ./runs/<name> [--origin <substr>] [--status 4xx,5xx] [--seq <n>]
   steno render ./runs/<name>
+  steno version
 `
 }
 
