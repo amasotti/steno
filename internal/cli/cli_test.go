@@ -5,6 +5,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/amasotti/steno/internal/timeline"
 )
 
 func TestRecordRequiresOut(t *testing.T) {
@@ -21,6 +23,9 @@ func TestRecordRequiresOut(t *testing.T) {
 }
 
 func TestRecordAcceptsOptionalURL(t *testing.T) {
+	restore := stubRecorderFactory(t, []timeline.Event{})
+	defer restore()
+
 	var stdout, stderr bytes.Buffer
 
 	err := Run(context.Background(), []string{"record", "--url", "https://example.test", "--out", "./runs/demo"}, &stdout, &stderr)
@@ -34,4 +39,31 @@ func TestRecordAcceptsOptionalURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run returned error for missing optonal arg: %v", err)
 	}
+}
+
+func stubRecorderFactory(t *testing.T, events []timeline.Event) func() {
+	t.Helper()
+
+	previous := newRecorder
+	newRecorder = func(rawURL string) eventRecorder {
+		return stubRecorder{events: events}
+	}
+	return func() {
+		newRecorder = previous
+	}
+}
+
+type stubRecorder struct {
+	events []timeline.Event
+}
+
+func (s stubRecorder) Record(context.Context) (<-chan timeline.Event, <-chan error) {
+	events := make(chan timeline.Event, len(s.events))
+	errs := make(chan error, 1)
+	for _, event := range s.events {
+		events <- event
+	}
+	close(events)
+	close(errs)
+	return events, errs
 }

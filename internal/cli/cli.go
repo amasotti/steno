@@ -10,10 +10,19 @@ import (
 	"path/filepath"
 
 	"github.com/amasotti/steno/internal/inspect"
+	cdprecorder "github.com/amasotti/steno/internal/recorder/cdp"
 	"github.com/amasotti/steno/internal/timeline"
 )
 
-func Run(_ context.Context, args []string, stdout io.Writer, _ io.Writer) error {
+type eventRecorder interface {
+	Record(context.Context) (<-chan timeline.Event, <-chan error)
+}
+
+var newRecorder = func(rawURL string) eventRecorder {
+	return cdprecorder.New(rawURL)
+}
+
+func Run(ctx context.Context, args []string, stdout io.Writer, _ io.Writer) error {
 	if len(args) == 0 {
 		_, err := fmt.Fprint(stdout, usage())
 		return err
@@ -21,8 +30,11 @@ func Run(_ context.Context, args []string, stdout io.Writer, _ io.Writer) error 
 
 	switch args[0] {
 	case "record":
-		_, err := parseRecord(args[1:])
-		return err
+		opts, err := parseRecord(args[1:])
+		if err != nil {
+			return err
+		}
+		return runRecord(ctx, opts)
 	case "inspect":
 		return runInspect(args[1:], stdout)
 	case "render":
@@ -70,6 +82,30 @@ func parseRecord(args []string) (RecordOptions, error) {
 	}
 
 	return opts, nil
+}
+
+func runRecord(ctx context.Context, opts RecordOptions) error {
+	if err := os.MkdirAll(opts.Out, 0o755); err != nil {
+		return fmt.Errorf("create output directory: %w", err)
+	}
+
+	file, err := os.Create(filepath.Join(opts.Out, "timeline.jsonl"))
+	if err != nil {
+		return fmt.Errorf("create timeline: %w", err)
+	}
+	defer func() { _ = file.Close() }()
+
+	events, errs := newRecorder(opts.URL).Record(ctx)
+	for event := range events {
+		if err := timeline.WriteJSONL(file, event); err != nil {
+			return fmt.Errorf("write timeline event: %w", err)
+		}
+	}
+
+	if err, ok := <-errs; ok && err != nil {
+		return err
+	}
+	return nil
 }
 
 func runInspect(args []string, stdout io.Writer) error {
