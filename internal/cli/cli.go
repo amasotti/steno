@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/amasotti/steno/internal/config"
 	"github.com/amasotti/steno/internal/filter"
@@ -55,7 +56,7 @@ func Run(ctx context.Context, args []string, stdout io.Writer, _ io.Writer) erro
 func usage() string {
 	return `Usage:
   steno record --out ./runs/<name> [--url https://example.com] [--config flow.toml]
-  steno inspect ./runs/<name>
+  steno inspect ./runs/<name> [--origin <substr>] [--status 4xx,5xx] [--seq <n>]
   steno render ./runs/<name>
 `
 }
@@ -133,15 +134,44 @@ func runRecord(ctx context.Context, opts RecordOptions, stdout io.Writer) error 
 	return printSessionSummary(stdout, summary.FromEvents(recorded), timelinePath)
 }
 
+// resolveRun accepts either a run directory or a path to its timeline.jsonl
+// file and returns the run directory plus the timeline path. Side-files
+// (payloads/, flow.mmd) live in the run directory, so both are always needed.
+func resolveRun(path string) (runDir, timelinePath string) {
+	if info, err := os.Stat(path); err == nil && !info.IsDir() {
+		return filepath.Dir(path), path
+	}
+	return path, filepath.Join(path, "timeline.jsonl")
+}
+
 func runInspect(args []string, stdout io.Writer) error {
 	if len(args) == 0 {
 		return errors.New("missing run directory")
 	}
-	if len(args) > 1 {
-		return fmt.Errorf("unexpected positional argument %q", args[1])
+	runDir := args[0]
+	if strings.HasPrefix(runDir, "-") {
+		return errors.New("missing run directory")
 	}
 
-	file, err := os.Open(filepath.Join(args[0], "timeline.jsonl"))
+	flags := flag.NewFlagSet("inspect", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	origin := flags.String("origin", "", "keep only events whose origin contains this substring")
+	statusList := flags.String("status", "", "keep only calls with these statuses (e.g. 4xx,5xx,404)")
+	seq := flags.Int("seq", -1, "show full detail (headers + payloads) for one event by sequence id")
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("unexpected positional argument %q", flags.Arg(0))
+	}
+
+	statuses, err := inspect.ParseStatuses(*statusList)
+	if err != nil {
+		return err
+	}
+
+	runDir, timelinePath := resolveRun(runDir)
+	file, err := os.Open(timelinePath)
 	if err != nil {
 		return fmt.Errorf("open timeline: %w", err)
 	}
@@ -152,6 +182,15 @@ func runInspect(args []string, stdout io.Writer) error {
 		return err
 	}
 
+	if *seq >= 0 {
+		event, ok := inspect.Find(events, *seq)
+		if !ok {
+			return fmt.Errorf("no event with seq %d", *seq)
+		}
+		return showInspectDetail(stdout, runDir, event)
+	}
+
+	events = inspect.Filter{Origin: *origin, Statuses: statuses}.Apply(events)
 	for _, event := range events {
 		switch event.Kind {
 		case timeline.KindCall:
@@ -167,6 +206,43 @@ func runInspect(args []string, stdout io.Writer) error {
 	return nil
 }
 
+func showInspectDetail(stdout io.Writer, runDir string, event timeline.Event) error {
+	if event.Kind == timeline.KindNavigation {
+		_, err := fmt.Fprintf(stdout, "seq %04d  nav  %s%s\n", event.Seq, event.Origin, event.Path)
+		return err
+	}
+
+	if _, err := fmt.Fprintf(stdout, "seq %04d  %s  %d  %s%s\n", event.Seq, event.Method, event.Status, event.Origin, event.Path); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, "duration %dms  size %dB\n", event.DurationMS, event.SizeBytes); err != nil {
+		return err
+	}
+
+	sections := []struct {
+		label string
+		ref   string
+	}{
+		{"request headers", event.RequestHeadersRef},
+		{"request body", event.RequestRef},
+		{"response headers", event.ResponseHeadersRef},
+		{"response body", event.ResponseRef},
+	}
+	for _, s := range sections {
+		if s.ref == "" {
+			continue
+		}
+		body, err := inspect.ReadArtifact(runDir, s.ref)
+		if err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(stdout, "\n%s (%s):\n%s\n", s.label, s.ref, body); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func runRender(args []string, stdout io.Writer) error {
 	if len(args) == 0 {
 		return errors.New("missing run directory")
@@ -175,8 +251,8 @@ func runRender(args []string, stdout io.Writer) error {
 		return fmt.Errorf("unexpected positional argument %q", args[1])
 	}
 
-	runDir := args[0]
-	timelineFile, err := os.Open(filepath.Join(runDir, "timeline.jsonl"))
+	runDir, timelinePath := resolveRun(args[0])
+	timelineFile, err := os.Open(timelinePath)
 	if err != nil {
 		return fmt.Errorf("open timeline: %w", err)
 	}

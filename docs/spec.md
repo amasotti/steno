@@ -120,8 +120,9 @@ capture: `error` and `warn` by default, plus messages under a configurable appli
 
 ### 7.9 Inspect a recording
 
-- Examine a recorded session without rendering artifacts: list calls, show one call's request/response payloads by sequence id, filter by origin or
-  status (e.g. only non-2xx). This is the "inspect" half of the tool — turning the durable timeline into something you can interrogate from the CLI.
+- Examine a recorded session without rendering artifacts: list calls, show one call's request/response payloads **and headers** by sequence id
+  (`--seq`), filter by origin (`--origin`) or status (`--status 4xx,5xx`, e.g. only non-2xx). This is the "inspect" half of the tool — turning the
+  durable timeline into something you can interrogate from the CLI.
 
 ### 7.10 Emit artifacts
 
@@ -225,7 +226,7 @@ extract_otp = "\\b\\d{6}\\b"
 
 - `steno record --config flow.toml --out ./runs/<timestamp>/` — attach or launch (per config/flags), record until interrupted, write
   `timeline.jsonl` + payload side-files. Flags: `--browser`, `--attach <url>`, `--launch`.
-- `steno inspect ./runs/<timestamp>/` — examine a recording: list calls, show a call's payloads by `seq`, filter by origin or status (
+- `steno inspect ./runs/<timestamp>/` — examine a recording: list calls, show a call's payloads + headers by `--seq`, filter by origin or status (
   `--status 4xx,5xx`, `--origin account.int.example`).
 - `steno render ./runs/<timestamp>/` — (re)generate `report.html` and `flow.mmd` from an existing timeline. Pure, offline, re-runnable.
 
