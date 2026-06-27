@@ -34,7 +34,7 @@ func Run(_ context.Context, args []string, stdout io.Writer, _ io.Writer) error 
 
 func usage() string {
 	return `Usage:
-  steno record --config flow.toml --out ./runs/<name>
+  steno record --config flow.toml --out ./runs/<name> [--url https://example.com]
   steno inspect ./runs/<name>
   steno render ./runs/<name>
 `

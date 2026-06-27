@@ -28,4 +28,10 @@ func TestRecordAcceptsOptionalURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
+
+	err = Run(context.Background(), []string{"record", "--out", "./runs/demo"}, &stdout, &stderr)
+
+	if err != nil {
+		t.Fatalf("Run returned error for missing optonal arg: %v", err)
+	}
 }
