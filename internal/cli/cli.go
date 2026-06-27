@@ -170,7 +170,7 @@ func runRender(args []string, stdout io.Writer) error {
 	}
 	defer func() { _ = flowFile.Close() }()
 
-	if err := render.Mermaid(flowFile, events); err != nil {
+	if err = render.Mermaid(flowFile, events); err != nil {
 		return fmt.Errorf("render flow diagram: %w", err)
 	}
 
