@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -25,18 +27,27 @@ type Recorder struct {
 	Payloads         *payload.Store
 	IncludeDocuments bool
 	IncludeHeaders   bool
+	// Stderr receives non-fatal warnings (e.g. a payload that could not be
+	// written to disk). Defaults to os.Stderr when nil.
+	Stderr io.Writer
+}
+
+// warnf reports a non-fatal problem without aborting the recording.
+func (r *Recorder) warnf(format string, args ...any) {
+	w := r.Stderr
+	if w == nil {
+		w = os.Stderr
+	}
+	fmt.Fprintf(w, "steno: "+format+"\n", args...)
 }
 
 type requestSnapshot struct {
-	Sequence    int
-	Method      string
-	URL         string
-	Status      int
-	Start       time.Time
-	End         time.Time
-	Size        int
-	RequestRef  string
-	ResponseRef string
+	Method string
+	URL    string
+	Status int
+	Start  time.Time
+	End    time.Time
+	Size   int
 }
 
 type trackedRequest struct {
@@ -235,17 +246,14 @@ func snapshotToEvent(snapshot requestSnapshot) (timeline.Event, bool) {
 	}
 
 	return timeline.Event{
-		Seq:         snapshot.Sequence,
-		Time:        snapshot.Start,
-		Kind:        timeline.KindCall,
-		Origin:      parsed.Scheme + "://" + parsed.Host,
-		Method:      snapshot.Method,
-		Path:        pathWithQuery(parsed),
-		Status:      snapshot.Status,
-		DurationMS:  int(snapshot.End.Sub(snapshot.Start).Milliseconds()),
-		SizeBytes:   snapshot.Size,
-		RequestRef:  snapshot.RequestRef,
-		ResponseRef: snapshot.ResponseRef,
+		Time:       snapshot.Start,
+		Kind:       timeline.KindCall,
+		Origin:     parsed.Scheme + "://" + parsed.Host,
+		Method:     snapshot.Method,
+		Path:       pathWithQuery(parsed),
+		Status:     snapshot.Status,
+		DurationMS: int(snapshot.End.Sub(snapshot.Start).Milliseconds()),
+		SizeBytes:  snapshot.Size,
 	}, true
 }
 
@@ -287,10 +295,11 @@ func (r *Recorder) saveRequestBody(ctx context.Context, seq int, req *trackedReq
 	}
 	body, err := network.GetRequestPostData(req.requestID).Do(cdp.WithExecutor(ctx, chromedp.FromContext(ctx).Target))
 	if err != nil {
-		return ""
+		return "" // CDP has no request body for this call — expected, stay silent.
 	}
 	ref, err := r.Payloads.Save(seq, payload.KindRequest, body)
 	if err != nil {
+		r.warnf("could not write request payload for seq %d: %v", seq, err)
 		return ""
 	}
 	return ref
@@ -302,6 +311,7 @@ func (r *Recorder) saveHeaders(seq int, kind payload.Kind, resourceType network.
 	}
 	ref, err := r.Payloads.SaveHeaders(seq, kind, headers)
 	if err != nil {
+		r.warnf("could not write %s for seq %d: %v", kind, seq, err)
 		return ""
 	}
 	return ref
@@ -332,10 +342,11 @@ func (r *Recorder) saveResponseBody(ctx context.Context, seq int, req *trackedRe
 	}
 	body, err := network.GetResponseBody(req.requestID).Do(cdp.WithExecutor(ctx, chromedp.FromContext(ctx).Target))
 	if err != nil {
-		return ""
+		return "" // CDP has no response body (e.g. evicted on navigation) — expected, stay silent.
 	}
 	ref, err := r.Payloads.Save(seq, payload.KindResponse, body)
 	if err != nil {
+		r.warnf("could not write response payload for seq %d: %v", seq, err)
 		return ""
 	}
 	return ref

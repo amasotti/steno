@@ -1,6 +1,10 @@
 package cdp
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,15 +19,12 @@ func TestSnapshotToEventNormalizesURLAndDuration(t *testing.T) {
 	end := start.Add(150 * time.Millisecond)
 
 	event, ok := snapshotToEvent(requestSnapshot{
-		Sequence:    7,
-		Method:      "POST",
-		URL:         "https://example.test/api/users?debug=true",
-		Status:      201,
-		Start:       start,
-		End:         end,
-		Size:        1234,
-		RequestRef:  "payloads/0007-req.txt",
-		ResponseRef: "payloads/0007-res.txt",
+		Method: "POST",
+		URL:    "https://example.test/api/users?debug=true",
+		Status: 201,
+		Start:  start,
+		End:    end,
+		Size:   1234,
 	})
 
 	if !ok {
@@ -43,12 +44,6 @@ func TestSnapshotToEventNormalizesURLAndDuration(t *testing.T) {
 	}
 	if event.SizeBytes != 1234 {
 		t.Fatalf("SizeBytes = %d, want 1234", event.SizeBytes)
-	}
-	if event.RequestRef != "payloads/0007-req.txt" {
-		t.Fatalf("RequestRef = %q, want payloads/0007-req.txt", event.RequestRef)
-	}
-	if event.ResponseRef != "payloads/0007-res.txt" {
-		t.Fatalf("ResponseRef = %q, want payloads/0007-res.txt", event.ResponseRef)
 	}
 }
 
@@ -116,5 +111,26 @@ func TestFlattenHeadersStringifiesValues(t *testing.T) {
 func TestFlattenHeadersEmptyReturnsNil(t *testing.T) {
 	if got := flattenHeaders(nil); got != nil {
 		t.Fatalf("flattenHeaders(nil) = %v, want nil", got)
+	}
+}
+
+func TestSaveHeadersWarnsOnWriteFailure(t *testing.T) {
+	// A regular file as the store root makes creating payloads/ under it fail,
+	// so the write error must surface as a warning rather than vanish.
+	notADir := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(notADir, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	var stderr bytes.Buffer
+	r := &Recorder{Payloads: payload.NewStore(notADir), IncludeHeaders: true, Stderr: &stderr}
+
+	ref := r.saveHeaders(7, payload.KindRequestHeaders, network.ResourceTypeXHR, map[string]string{"a": "b"})
+
+	if ref != "" {
+		t.Fatalf("ref = %q, want empty on write failure", ref)
+	}
+	if !strings.Contains(stderr.String(), "could not write") {
+		t.Fatalf("stderr = %q, want a write-failure warning", stderr.String())
 	}
 }
