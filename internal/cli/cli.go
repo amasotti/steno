@@ -2,12 +2,14 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/amasotti/steno/internal/config"
@@ -16,6 +18,7 @@ import (
 	"github.com/amasotti/steno/internal/payload"
 	cdprecorder "github.com/amasotti/steno/internal/recorder/cdp"
 	"github.com/amasotti/steno/internal/render"
+	"github.com/amasotti/steno/internal/replay"
 	"github.com/amasotti/steno/internal/summary"
 	"github.com/amasotti/steno/internal/timeline"
 )
@@ -33,7 +36,7 @@ var newRecorder = func(rawURL string, f *filter.Filter, payloads *payload.Store,
 	return cdprecorder.New(rawURL, f, payloads, includeDocuments, includeHeaders)
 }
 
-func Run(ctx context.Context, args []string, stdout io.Writer, _ io.Writer) error {
+func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		_, err := fmt.Fprint(stdout, usage())
 		return err
@@ -48,6 +51,8 @@ func Run(ctx context.Context, args []string, stdout io.Writer, _ io.Writer) erro
 		return runRecord(ctx, opts, stdout)
 	case "inspect":
 		return runInspect(args[1:], stdout)
+	case "replay":
+		return runReplay(args[1:], stdout, stderr)
 	case "render":
 		return runRender(args[1:], stdout)
 	case "version", "-v", "--version":
@@ -65,6 +70,7 @@ func usage() string {
 	return `Usage:
   steno record --out ./runs/<name> [--url https://example.com] [--config flow.toml]
   steno inspect ./runs/<name> [--origin <substr>] [--status 4xx,5xx] [--seq <n>]
+  steno replay ./runs/<name> <seq>
   steno render ./runs/<name>
   steno version
 `
@@ -203,11 +209,18 @@ func runInspect(args []string, stdout io.Writer) error {
 	for _, event := range events {
 		switch event.Kind {
 		case timeline.KindCall:
-			if _, err := fmt.Fprintf(stdout, "%04d  %d  %s  %s%s\n", event.Seq, event.Status, event.Method, event.Origin, event.Path); err != nil {
+			if _, err := fmt.Fprintf(stdout, "%s  %s  %s  %s%s\n",
+				stylePath(fmt.Sprintf("%04d", event.Seq)),
+				styleStatus(event.Status, fmt.Sprintf("%d", event.Status)),
+				styleLabel(event.Method),
+				event.Origin, event.Path); err != nil {
 				return err
 			}
 		case timeline.KindNavigation:
-			if _, err := fmt.Fprintf(stdout, "%04d  nav  %s%s\n", event.Seq, event.Origin, event.Path); err != nil {
+			if _, err := fmt.Fprintf(stdout, "%s  %s  %s%s\n",
+				stylePath(fmt.Sprintf("%04d", event.Seq)),
+				styleLabel("nav"),
+				event.Origin, event.Path); err != nil {
 				return err
 			}
 		}
@@ -217,14 +230,19 @@ func runInspect(args []string, stdout io.Writer) error {
 
 func showInspectDetail(stdout io.Writer, runDir string, event timeline.Event) error {
 	if event.Kind == timeline.KindNavigation {
-		_, err := fmt.Fprintf(stdout, "seq %04d  nav  %s%s\n", event.Seq, event.Origin, event.Path)
+		_, err := fmt.Fprintf(stdout, "%s %s  %s  %s%s\n", styleLabel("seq"), stylePath(fmt.Sprintf("%04d", event.Seq)), styleLabel("nav"), event.Origin, event.Path)
 		return err
 	}
 
-	if _, err := fmt.Fprintf(stdout, "seq %04d  %s  %d  %s%s\n", event.Seq, event.Method, event.Status, event.Origin, event.Path); err != nil {
+	if _, err := fmt.Fprintf(stdout, "%s %s  %s  %s  %s%s\n",
+		styleLabel("seq"),
+		stylePath(fmt.Sprintf("%04d", event.Seq)),
+		styleLabel(event.Method),
+		styleStatus(event.Status, fmt.Sprintf("%d", event.Status)),
+		event.Origin, event.Path); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(stdout, "duration %dms  size %dB\n", event.DurationMS, event.SizeBytes); err != nil {
+	if _, err := fmt.Fprintf(stdout, "%s %dms  %s %dB\n", styleLabel("duration"), event.DurationMS, styleLabel("size"), event.SizeBytes); err != nil {
 		return err
 	}
 
@@ -245,11 +263,75 @@ func showInspectDetail(stdout io.Writer, runDir string, event timeline.Event) er
 		if err != nil {
 			return err
 		}
-		if _, err := fmt.Fprintf(stdout, "\n%s (%s):\n%s\n", s.label, s.ref, body); err != nil {
+		if _, err := fmt.Fprintf(stdout, "\n%s %s\n%s\n", styleHeader(s.label), stylePath("("+s.ref+")"), body); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func runReplay(args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 {
+		return errors.New("missing run directory")
+	}
+	if len(args) < 2 {
+		return errors.New("missing seq; usage: steno replay <run> <seq>")
+	}
+	if len(args) > 2 {
+		return fmt.Errorf("unexpected positional argument %q", args[2])
+	}
+	seq, err := strconv.Atoi(args[1])
+	if err != nil {
+		return fmt.Errorf("invalid seq %q", args[1])
+	}
+
+	runDir, timelinePath := resolveRun(args[0])
+	file, err := os.Open(timelinePath)
+	if err != nil {
+		return fmt.Errorf("open timeline: %w", err)
+	}
+	defer func() { _ = file.Close() }()
+
+	events, err := inspect.ReadTimeline(file)
+	if err != nil {
+		return err
+	}
+
+	event, ok := inspect.Find(events, seq)
+	if !ok {
+		return fmt.Errorf("no event with seq %d", seq)
+	}
+	if event.Kind != timeline.KindCall {
+		return fmt.Errorf("seq %d is a %s, not a call; only calls can be replayed", seq, event.Kind)
+	}
+
+	var headers map[string]string
+	if event.RequestHeadersRef != "" {
+		raw, err := inspect.ReadArtifact(runDir, event.RequestHeadersRef)
+		if err != nil {
+			return err
+		}
+		if err := json.Unmarshal(raw, &headers); err != nil {
+			return fmt.Errorf("parse request headers %q: %w", event.RequestHeadersRef, err)
+		}
+	}
+
+	var body []byte
+	if event.RequestRef != "" {
+		body, err = inspect.ReadArtifact(runDir, event.RequestRef)
+		if err != nil {
+			return err
+		}
+	}
+
+	cmd, warnings := replay.Curl(event, headers, body)
+	for _, w := range warnings {
+		if _, err := fmt.Fprintf(stderr, "steno replay: %s\n", w); err != nil {
+			return err
+		}
+	}
+	_, err = fmt.Fprintln(stdout, cmd)
+	return err
 }
 
 func runRender(args []string, stdout io.Writer) error {
@@ -283,7 +365,7 @@ func runRender(args []string, stdout io.Writer) error {
 		return fmt.Errorf("render flow diagram: %w", err)
 	}
 
-	_, err = fmt.Fprintf(stdout, "Rendered: %s\n", flowPath)
+	_, err = fmt.Fprintf(stdout, "%s %s\n", styleLabel("Rendered:"), stylePath(flowPath))
 	return err
 }
 
