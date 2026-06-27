@@ -1,0 +1,38 @@
+version: "2"
+
+linters:
+  enable:
+    - errcheck       # unchecked errors
+    - govet          # go vet (shadow, printf, etc.)
+    - staticcheck    # SA*, S1*, QF* checks
+    - ineffassign    # assigned but never used
+    - unused         # unused code
+    - gosec          # security issues (G-series)
+    - misspell       # common spelling mistakes in comments/strings
+    - nilerr         # return nil alongside non-nil error
+    - bodyclose      # http response body close check
+    - contextcheck   # context propagation
+
+  settings:
+    govet:
+      enable:
+        - shadow
+    gosec:
+      excludes:
+        - G304  # file path from variable — expected for configurable recording paths
+
+  exclusions:
+    rules:
+      # test files: relax errcheck and gosec
+      - path: "_test\\.go"
+        linters:
+          - errcheck
+          - gosec
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+
+issues:
+  max-same-issues: 10

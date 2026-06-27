@@ -7,13 +7,16 @@ fmt:
     @files="$(fd -e go)"; if [ -n "$files" ]; then gofmt -w $files; fi
 
 test:
-    GOCACHE=/Users/toni/halb-personal/steno/.cache/go-build go test ./...
+    GOCACHE=/Users/toni/halb-personal/steno/.cache/go-build GOMODCACHE=/Users/toni/halb-personal/steno/.cache/go-mod go test ./...
 
 build:
     mkdir -p bin
-    GOCACHE=/Users/toni/halb-personal/steno/.cache/go-build go build -o bin/steno ./cmd/steno
+    GOCACHE=/Users/toni/halb-personal/steno/.cache/go-build GOMODCACHE=/Users/toni/halb-personal/steno/.cache/go-mod go build -o bin/steno ./cmd/steno
 
 lint:
-    staticcheck ./...
+    golangci-lint run
 
-ci-local: fmt test build
+vuln:
+    GOCACHE=/Users/toni/halb-personal/steno/.cache/go-build GOMODCACHE=/Users/toni/halb-personal/steno/.cache/go-mod govulncheck ./...
+
+ci-local: fmt lint test build
