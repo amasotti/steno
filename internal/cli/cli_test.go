@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/amasotti/steno/internal/filter"
-	"github.com/amasotti/steno/internal/payload"
 	"github.com/amasotti/steno/internal/timeline"
 )
 
@@ -47,7 +46,7 @@ func stubRecorderFactory(t *testing.T, events []timeline.Event) func() {
 	t.Helper()
 
 	previous := newRecorder
-	newRecorder = func(rawURL string, _ *filter.Filter, _ *payload.Store) eventRecorder {
+	newRecorder = func(rawURL string, _ *filter.Filter, _ bool) eventRecorder {
 		return stubRecorder{events: events}
 	}
 	return func() {
