@@ -307,12 +307,12 @@ func runReplay(args []string, stdout, stderr io.Writer) error {
 
 	var headers map[string]string
 	if event.RequestHeadersRef != "" {
-		raw, err := inspect.ReadArtifact(runDir, event.RequestHeadersRef)
-		if err != nil {
-			return err
+		raw, readErr := inspect.ReadArtifact(runDir, event.RequestHeadersRef)
+		if readErr != nil {
+			return readErr
 		}
-		if err := json.Unmarshal(raw, &headers); err != nil {
-			return fmt.Errorf("parse request headers %q: %w", event.RequestHeadersRef, err)
+		if parseErr := json.Unmarshal(raw, &headers); parseErr != nil {
+			return fmt.Errorf("parse request headers %q: %w", event.RequestHeadersRef, parseErr)
 		}
 	}
 
@@ -326,8 +326,8 @@ func runReplay(args []string, stdout, stderr io.Writer) error {
 
 	cmd, warnings := replay.Curl(event, headers, body)
 	for _, w := range warnings {
-		if _, err := fmt.Fprintf(stderr, "steno replay: %s\n", w); err != nil {
-			return err
+		if _, writeErr := fmt.Fprintf(stderr, "steno replay: %s\n", w); writeErr != nil {
+			return writeErr
 		}
 	}
 	_, err = fmt.Fprintln(stdout, cmd)
