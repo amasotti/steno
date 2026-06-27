@@ -1,0 +1,55 @@
+package payload
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestStoreWritesRequestAndResponsePayloads(t *testing.T) {
+	store := NewStore(t.TempDir())
+
+	reqRef, err := store.Save(42, KindRequest, []byte(`{"username":"admin","password":"admin"}`))
+	if err != nil {
+		t.Fatalf("Save request returned error: %v", err)
+	}
+	resRef, err := store.Save(42, KindResponse, []byte(`{"ok":true}`))
+	if err != nil {
+		t.Fatalf("Save response returned error: %v", err)
+	}
+
+	if reqRef != "payloads/0042-req.txt" {
+		t.Fatalf("request ref = %q, want payloads/0042-req.txt", reqRef)
+	}
+	if resRef != "payloads/0042-res.txt" {
+		t.Fatalf("response ref = %q, want payloads/0042-res.txt", resRef)
+	}
+
+	req, err := os.ReadFile(filepath.Join(store.Root(), reqRef))
+	if err != nil {
+		t.Fatalf("read request payload: %v", err)
+	}
+	if string(req) != `{"username":"admin","password":"admin"}` {
+		t.Fatalf("request payload = %q", req)
+	}
+
+	res, err := os.ReadFile(filepath.Join(store.Root(), resRef))
+	if err != nil {
+		t.Fatalf("read response payload: %v", err)
+	}
+	if string(res) != `{"ok":true}` {
+		t.Fatalf("response payload = %q", res)
+	}
+}
+
+func TestStoreSkipsEmptyPayloads(t *testing.T) {
+	store := NewStore(t.TempDir())
+
+	ref, err := store.Save(1, KindRequest, nil)
+	if err != nil {
+		t.Fatalf("Save returned error: %v", err)
+	}
+	if ref != "" {
+		t.Fatalf("ref = %q, want empty ref", ref)
+	}
+}

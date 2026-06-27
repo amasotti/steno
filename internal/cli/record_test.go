@@ -13,12 +13,14 @@ import (
 
 func TestRecordWritesTimelineJSONL(t *testing.T) {
 	restore := stubRecorderFactory(t, []timeline.Event{{
-		Seq:    1,
-		Kind:   timeline.KindCall,
-		Origin: "https://example.test",
-		Method: "GET",
-		Path:   "/api",
-		Status: 200,
+		Seq:         1,
+		Kind:        timeline.KindCall,
+		Origin:      "https://example.test",
+		Method:      "GET",
+		Path:        "/api",
+		Status:      200,
+		RequestRef:  "payloads/0001-req.txt",
+		ResponseRef: "payloads/0001-res.txt",
 	}})
 	defer restore()
 
@@ -35,8 +37,11 @@ func TestRecordWritesTimelineJSONL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read timeline: %v", err)
 	}
-	if got := string(content); !strings.Contains(got, `"kind":"call"`) || !strings.Contains(got, `"path":"/api"`) {
-		t.Fatalf("timeline content = %q, want call event with /api path", got)
+	got := string(content)
+	for _, want := range []string{`"kind":"call"`, `"path":"/api"`, `"request_ref":"payloads/0001-req.txt"`, `"response_ref":"payloads/0001-res.txt"`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("timeline content = %q, want it to contain %q", got, want)
+		}
 	}
 }
 

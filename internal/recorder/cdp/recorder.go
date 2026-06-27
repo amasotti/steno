@@ -12,27 +12,33 @@ import (
 	"github.com/chromedp/chromedp"
 
 	"github.com/amasotti/steno/internal/filter"
+	"github.com/amasotti/steno/internal/payload"
 	"github.com/amasotti/steno/internal/timeline"
 )
 
 type Recorder struct {
-	URL    string
-	Filter *filter.Filter
+	URL      string
+	Filter   *filter.Filter
+	Payloads *payload.Store
 }
 
 type requestSnapshot struct {
-	Sequence int
-	Method   string
-	URL      string
-	Status   int
-	Start    time.Time
-	End      time.Time
-	Size     int
+	Sequence    int
+	Method      string
+	URL         string
+	Status      int
+	Start       time.Time
+	End         time.Time
+	Size        int
+	RequestRef  string
+	ResponseRef string
 }
 
 type trackedRequest struct {
 	method       string
 	rawURL       string
+	requestID    network.RequestID
+	hasPostData  bool
 	resourceType network.ResourceType
 	status       int
 	start        time.Time
@@ -40,8 +46,13 @@ type trackedRequest struct {
 	size         int
 }
 
-func New(rawURL string, f *filter.Filter) *Recorder {
-	return &Recorder{URL: rawURL, Filter: f}
+type payloadWork struct {
+	req   *trackedRequest
+	event timeline.Event
+}
+
+func New(rawURL string, f *filter.Filter, payloads *payload.Store) *Recorder {
+	return &Recorder{URL: rawURL, Filter: f, Payloads: payloads}
 }
 
 func (r *Recorder) Record(ctx context.Context) (<-chan timeline.Event, <-chan error) {
@@ -68,16 +79,40 @@ func (r *Recorder) record(parent context.Context, events chan<- timeline.Event) 
 
 	var sequence atomic.Int64
 	var mu sync.Mutex
+	var wg sync.WaitGroup
 	requests := map[network.RequestID]*trackedRequest{}
+	payloads := make(chan payloadWork, 128)
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case work := <-payloads:
+				work.event.RequestRef = r.saveRequestBody(ctx, work.event.Seq, work.req)
+				work.event.ResponseRef = r.saveResponseBody(ctx, work.event.Seq, work.req)
+
+				select {
+				case events <- work.event:
+				case <-parent.Done():
+					return
+				}
+			case <-parent.Done():
+				return
+			}
+		}
+	}()
 
 	chromedp.ListenTarget(ctx, func(ev any) {
 		switch ev := ev.(type) {
 		case *network.EventRequestWillBeSent:
 			mu.Lock()
 			requests[ev.RequestID] = &trackedRequest{
-				method: ev.Request.Method,
-				rawURL: ev.Request.URL,
-				start:  time.Now().UTC(),
+				method:      ev.Request.Method,
+				rawURL:      ev.Request.URL,
+				requestID:   ev.RequestID,
+				hasPostData: ev.Request.HasPostData,
+				start:       time.Now().UTC(),
 			}
 			mu.Unlock()
 		case *network.EventResponseReceived:
@@ -118,7 +153,7 @@ func (r *Recorder) record(parent context.Context, events chan<- timeline.Event) 
 			event.Seq = int(sequence.Add(1))
 
 			select {
-			case events <- event:
+			case payloads <- payloadWork{req: req, event: event}:
 			case <-parent.Done():
 			}
 		}
@@ -136,6 +171,7 @@ func (r *Recorder) record(parent context.Context, events chan<- timeline.Event) 
 	}
 
 	<-parent.Done()
+	wg.Wait()
 	if errors.Is(parent.Err(), context.Canceled) {
 		return nil
 	}
@@ -149,15 +185,17 @@ func snapshotToEvent(snapshot requestSnapshot) (timeline.Event, bool) {
 	}
 
 	return timeline.Event{
-		Seq:        snapshot.Sequence,
-		Time:       snapshot.Start,
-		Kind:       timeline.KindCall,
-		Origin:     parsed.Scheme + "://" + parsed.Host,
-		Method:     snapshot.Method,
-		Path:       pathWithQuery(parsed),
-		Status:     snapshot.Status,
-		DurationMS: int(snapshot.End.Sub(snapshot.Start).Milliseconds()),
-		SizeBytes:  snapshot.Size,
+		Seq:         snapshot.Sequence,
+		Time:        snapshot.Start,
+		Kind:        timeline.KindCall,
+		Origin:      parsed.Scheme + "://" + parsed.Host,
+		Method:      snapshot.Method,
+		Path:        pathWithQuery(parsed),
+		Status:      snapshot.Status,
+		DurationMS:  int(snapshot.End.Sub(snapshot.Start).Milliseconds()),
+		SizeBytes:   snapshot.Size,
+		RequestRef:  snapshot.RequestRef,
+		ResponseRef: snapshot.ResponseRef,
 	}, true
 }
 
@@ -170,4 +208,34 @@ func pathWithQuery(parsed *url.URL) string {
 		path += "?" + parsed.RawQuery
 	}
 	return path
+}
+
+func (r *Recorder) saveRequestBody(ctx context.Context, seq int, req *trackedRequest) string {
+	if r.Payloads == nil || !req.hasPostData {
+		return ""
+	}
+	body, err := network.GetRequestPostData(req.requestID).Do(ctx)
+	if err != nil {
+		return ""
+	}
+	ref, err := r.Payloads.Save(seq, payload.KindRequest, body)
+	if err != nil {
+		return ""
+	}
+	return ref
+}
+
+func (r *Recorder) saveResponseBody(ctx context.Context, seq int, req *trackedRequest) string {
+	if r.Payloads == nil {
+		return ""
+	}
+	body, err := network.GetResponseBody(req.requestID).Do(ctx)
+	if err != nil {
+		return ""
+	}
+	ref, err := r.Payloads.Save(seq, payload.KindResponse, body)
+	if err != nil {
+		return ""
+	}
+	return ref
 }

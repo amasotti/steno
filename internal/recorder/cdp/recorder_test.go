@@ -12,13 +12,15 @@ func TestSnapshotToEventNormalizesURLAndDuration(t *testing.T) {
 	end := start.Add(150 * time.Millisecond)
 
 	event, ok := snapshotToEvent(requestSnapshot{
-		Sequence: 7,
-		Method:   "POST",
-		URL:      "https://example.test/api/users?debug=true",
-		Status:   201,
-		Start:    start,
-		End:      end,
-		Size:     1234,
+		Sequence:    7,
+		Method:      "POST",
+		URL:         "https://example.test/api/users?debug=true",
+		Status:      201,
+		Start:       start,
+		End:         end,
+		Size:        1234,
+		RequestRef:  "payloads/0007-req.txt",
+		ResponseRef: "payloads/0007-res.txt",
 	})
 
 	if !ok {
@@ -38,6 +40,12 @@ func TestSnapshotToEventNormalizesURLAndDuration(t *testing.T) {
 	}
 	if event.SizeBytes != 1234 {
 		t.Fatalf("SizeBytes = %d, want 1234", event.SizeBytes)
+	}
+	if event.RequestRef != "payloads/0007-req.txt" {
+		t.Fatalf("RequestRef = %q, want payloads/0007-req.txt", event.RequestRef)
+	}
+	if event.ResponseRef != "payloads/0007-res.txt" {
+		t.Fatalf("ResponseRef = %q, want payloads/0007-res.txt", event.ResponseRef)
 	}
 }
 

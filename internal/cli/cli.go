@@ -12,6 +12,7 @@ import (
 	"github.com/amasotti/steno/internal/config"
 	"github.com/amasotti/steno/internal/filter"
 	"github.com/amasotti/steno/internal/inspect"
+	"github.com/amasotti/steno/internal/payload"
 	cdprecorder "github.com/amasotti/steno/internal/recorder/cdp"
 	"github.com/amasotti/steno/internal/render"
 	"github.com/amasotti/steno/internal/summary"
@@ -22,8 +23,8 @@ type eventRecorder interface {
 	Record(context.Context) (<-chan timeline.Event, <-chan error)
 }
 
-var newRecorder = func(rawURL string, f *filter.Filter) eventRecorder {
-	return cdprecorder.New(rawURL, f)
+var newRecorder = func(rawURL string, f *filter.Filter, payloads *payload.Store) eventRecorder {
+	return cdprecorder.New(rawURL, f, payloads)
 }
 
 func Run(ctx context.Context, args []string, stdout io.Writer, _ io.Writer) error {
@@ -115,7 +116,7 @@ func runRecord(ctx context.Context, opts RecordOptions, stdout io.Writer) error 
 	}
 	defer func() { _ = file.Close() }()
 
-	events, errs := newRecorder(startURL, filter.New(cfg.Filter)).Record(ctx)
+	events, errs := newRecorder(startURL, filter.New(cfg.Filter), payload.NewStore(opts.Out)).Record(ctx)
 	var recorded []timeline.Event
 	timelinePath := filepath.Join(opts.Out, "timeline.jsonl")
 	for event := range events {
