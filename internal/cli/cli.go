@@ -11,6 +11,7 @@ import (
 
 	"github.com/amasotti/steno/internal/inspect"
 	cdprecorder "github.com/amasotti/steno/internal/recorder/cdp"
+	"github.com/amasotti/steno/internal/render"
 	"github.com/amasotti/steno/internal/summary"
 	"github.com/amasotti/steno/internal/timeline"
 )
@@ -39,8 +40,7 @@ func Run(ctx context.Context, args []string, stdout io.Writer, _ io.Writer) erro
 	case "inspect":
 		return runInspect(args[1:], stdout)
 	case "render":
-		_, err := fmt.Fprintln(stdout, "render: not implemented yet")
-		return err
+		return runRender(args[1:], stdout)
 	case "help", "-h", "--help":
 		_, err := fmt.Fprint(stdout, usage())
 		return err
@@ -141,6 +141,41 @@ func runInspect(args []string, stdout io.Writer) error {
 		}
 	}
 	return nil
+}
+
+func runRender(args []string, stdout io.Writer) error {
+	if len(args) == 0 {
+		return errors.New("missing run directory")
+	}
+	if len(args) > 1 {
+		return fmt.Errorf("unexpected positional argument %q", args[1])
+	}
+
+	runDir := args[0]
+	timelineFile, err := os.Open(filepath.Join(runDir, "timeline.jsonl"))
+	if err != nil {
+		return fmt.Errorf("open timeline: %w", err)
+	}
+	defer func() { _ = timelineFile.Close() }()
+
+	events, err := inspect.ReadTimeline(timelineFile)
+	if err != nil {
+		return err
+	}
+
+	flowPath := filepath.Join(runDir, "flow.mmd")
+	flowFile, err := os.Create(flowPath)
+	if err != nil {
+		return fmt.Errorf("create flow diagram: %w", err)
+	}
+	defer func() { _ = flowFile.Close() }()
+
+	if err := render.Mermaid(flowFile, events); err != nil {
+		return fmt.Errorf("render flow diagram: %w", err)
+	}
+
+	_, err = fmt.Fprintf(stdout, "Rendered: %s\n", flowPath)
+	return err
 }
 
 func printSessionSummary(w io.Writer, result summary.Summary, timelinePath string) error {
