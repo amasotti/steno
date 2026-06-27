@@ -1,148 +1,134 @@
-# Steno — product spec
+# Steno — Behavioral Specification
 
-> A headful Chromium session recorder & inspector. It turns a manual test flow into a clean, signal-only, dual-audience timeline. Records everything
-> that matters, judges nothing.
+This is the behavioral source of truth for Steno: what it does, what it deliberately does not do, the
+event model it produces, and the CLI surface. It describes the **shipped** tool. Anything reserved for
+future work is called out explicitly in [§9](#9-reserved-and-out-of-scope).
 
-## 1. One-line summary
+For the *why* behind the structure — package boundaries, contracts, design choices — see
+[`architecture.md`](./architecture.md). For day-to-day usage, see the [README](../README.md).
 
-`steno` attaches to (or launches) a Chromium browser you click through by hand, records the meaningful network calls and the navigation journey across
-tabs and redirects, keeps just enough detail (origin, path, method, request/response payloads, basic stats), and writes a durable timeline you can
-inspect yourself or hand to an LLM agent.
+## 1. Summary
 
-## 2. Problem & motivation
+`steno` launches a Chromium-family browser that a person clicks through by hand, records the
+meaningful network calls and the navigation journey, keeps just enough detail (origin, path, method,
+status, full request/response payloads, basic stats), and writes a durable, ordered timeline that the
+same person can inspect from the CLI or hand to an LLM agent.
 
-When testing a web application manually — especially a flow that spans several microservices, redirects between origins, and occasionally opens new
-tabs — there is no good record of *what actually happened*. The browser DevTools network tab is per-tab, ephemeral, and drowned in static assets (JS
-bundles, CSS, fonts, images, analytics, telemetry). After a manual test you are left with no reproducible audit of which systems were touched, in what
-order, what they returned, and where (if anywhere) something failed.
+It owns two local, deterministic verbs and stays out of a third:
 
-The gap is specifically in the **browser plane**. Backend observability (logs, traces, message queues, databases) usually already exists or can be
-queried after the fact. What is missing is a faithful, low-noise record of the front-of-house journey, captured live while a person tests, in a form
-that both a human and an agent can read. Steno fills exactly that gap and nothing more.
+- **Record** (live, no LLM) — runs while the user tests, captures the browser plane, filters to
+  signal, and writes the timeline plus payload side-files.
+- **Inspect / render / replay** (offline, no LLM) — interrogate a recording, derive a sequence
+  diagram, or reproduce a call as `curl`. All re-runnable against an existing recording.
+- **Analyse** (downstream, out of scope) — an agent reads the artifacts to write a report or chase a
+  failure into backend planes. Steno produces the raw material; it performs no analysis.
 
-## 3. Who it is for
+The record path never depends on an agent, and the artifacts are self-sufficient for the common cases
+(audit, sequence diagram, failure localisation) without any backend round-trip.
 
-Developers and QA engineers who test web applications manually and want an audit trail of the session. Output is designed for two consumers at once: a
-human skimming a timeline / sequence diagram, and an LLM agent (Claude Code, Codex, etc.) ingesting the record to write a report, reconstruct the
-flow, or debug a failure. The tool is general-purpose — any web app, any flow — not tied to one application.
+## 2. Problem and motivation
+
+Manual testing of a multi-service web flow leaves no faithful record of the front-of-house journey.
+DevTools' network tab is per-tab, ephemeral, and buried under static assets. Backend observability
+(logs, traces, queues) usually already exists; the gap is specifically the **browser plane** — a
+low-noise, durable record of which systems were touched, in what order, what they returned, and where
+something failed, captured live while a person tests, in a form both a human and an agent can read.
+
+## 3. Audience
+
+Developers and QA engineers who test web applications by hand and want an audit trail. Output targets
+two consumers at once: a human skimming a timeline or sequence diagram, and an LLM agent ingesting the
+record. The tool is general-purpose — any web app, any flow.
 
 ## 4. Goals
 
-1. **Record the session.** While the user tests manually, capture each meaningful step with a timestamp, the request payload, the response payload,
-   and minimal per-call metrics (duration, size). Follow the user across same-tab navigations, cross-origin redirects, and additional tabs.
-2. **Produce a dual-audience timeline.** Emit one artifact that is both machine-ingestable and human-viewable, describing what was done on which
-   systems. It serves as (a) an audit of the test — the ordered timeline, plus named facts extracted from responses such as the UUID assigned to a
-   newly created user — and (b) the raw material from which a sequence diagram and a user-journey view can be drawn.
-3. **Localise failures.** When something goes wrong, the record must make it obvious *where* the non-2xx response occurred — which origin, which call,
-   with the request and response payloads attached — without needing any other tool.
+1. **Record the session.** Capture each meaningful call with a timestamp, request payload, response
+   payload, and minimal metrics (duration, size). Follow same-tab navigations and cross-origin
+   redirects.
+2. **Produce a readable timeline.** Emit one canonical artifact that is both machine-ingestable
+   (`timeline.jsonl`) and the source for a human-viewable sequence diagram (`flow.mmd`).
+3. **Localise failures.** Make it obvious *where* a non-2xx response occurred — which origin, which
+   call — with both payloads attached, without needing another tool.
 
-## 5. Non-goals (YAGNI boundary)
+## 5. Functional behavior (shipped)
 
-- **Chromium family only.** Steno talks CDP, which covers Chrome, Edge, Brave, Opera and any other Chromium browser. Non-Chromium engines (Firefox via
-  WebDriver BiDi, Safari via WebKit) are explicitly out of scope for v1. See §13 for the seam that keeps that door open cheaply.
-- **Not a deep network profiler.** It captures origin, path, method, status, payloads and basic stats — not full headers, timing waterfalls, or
-  HAR-level detail. "Enough to understand and audit the flow", not "everything DevTools knows".
-- **No literal user-input capture.** It does not inject scripts to record individual clicks or keystrokes. CDP can only *dispatch* synthetic input,
-  never observe real input, so capturing literal clicks would require JS injection — deliberately avoided. The journey is reconstructed from
-  navigation and network events instead, which is sufficient for the audit, the sequence diagram, and failure localisation.
-- **Not an automation or replay tool.** It does not drive the browser, generate Playwright/Puppeteer scripts, or replay sessions. The human drives;
-  Steno only observes. If you need a script, use Playwright — that is its job, not this one's.
-- **Not a session-replay / DOM-pixel recorder.** It is not rrweb. It records a structured event timeline, not a frame-by-frame DOM reconstruction.
-- **No analysis / no LLM in the tool.** The recorder contains no LLM and makes no judgements. Analysis (reports, root-causing) happens downstream in
-  an agent. Steno is a stenographer, not an investigator.
+### 5.1 Launch and capture
 
-## 6. Core concept — two verbs, then a downstream phase
+- **Launch** a managed Chromium instance over CDP and open `start_url` (or `--url`). Headful only —
+  the user must see and drive the browser.
+- A `browser` setting selects which Chromium binary to launch (`chrome`, `edge`, `brave`, …); same
+  protocol, different executable.
+- Capture is **single-tab**: the launched tab's `Network` and `Page` domains are observed. Recording
+  runs until the user interrupts it (`Ctrl-C`).
 
-Steno owns two local, deterministic verbs and stays out of the third:
+### 5.2 Capture — lean by design
 
-- **Record** (live, no LLM) — runs while the user tests, captures the browser plane, filters and extracts, writes the timeline.
-- **Inspect** (offline, no LLM) — examine and render a recorded session: list the calls, view a payload, filter by origin or status, generate the
-  report and sequence diagram. Fully re-runnable against an existing recording.
-- **Analyse** (downstream, out of scope) — an agent reads the artifacts to write a report or, when chasing a failure, pivots to backend planes (
-  Datadog, Kafka, service/CRM APIs) using the join keys the timeline already holds.
+For each kept network call, one `call` event carries: **origin** (scheme + host), **path** (with
+query), **method**, **status**, start/end-derived **duration**, transferred **size**, and references
+to full **request** and **response** payloads. Document (HTML) bodies are skipped by default. Raw
+request/response headers — including `Cookie` / `Set-Cookie` — are captured as side-files only when
+`include_headers` is enabled.
 
-The record path must never depend on an agent, and the artifacts must be self-sufficient for the common cases (audit, sequence diagram, failure
-localisation) without any backend round-trip.
+### 5.3 Follow the journey
 
-## 7. Functional requirements
+Top-frame navigations and redirects are captured as `navigation` events from CDP `Page` events
+(sub-frames dropped; `about:blank` and other scheme-less URLs skipped). Navigation and `call` events
+share one sequence counter, so the timeline preserves real order including redirect chains. No JS is
+injected.
 
-### 7.1 Attach or launch (both first-class)
+### 5.4 Filter to signal (config-driven, applied in order)
 
-- **Attach** to an already-running Chromium debug instance via a browser URL (`http://localhost:9222`).
-- **Launch** a managed Chromium instance with a dedicated `--user-data-dir`. Because of the Chrome 136+ security change, `--remote-debugging-port` is
-  not honoured on the default profile, so a dedicated profile is mandatory for the launch path.
-- A `--browser` flag selects which Chromium binary to launch/expect (chrome, edge, brave, …) — same protocol, different executable.
-- Headful only. The user must see and drive the browser.
+A CDP-free filter decides what to keep; the first failing rule drops the event:
 
-### 7.2 Follow the whole journey
+1. **Resource-type allowlist** — keep `Document`, `XHR`, `Fetch`, `WebSocket`; drop
+   `Script`, `Stylesheet`, `Image`, `Font`, `Media`, `Manifest`. The single largest noise cut.
+2. **Host allowlist** — keep only configured origins; an empty list allows all. Supports exact match
+   and a leading-`*.` wildcard suffix match (`*.example.com` matches `api.example.com` but **not** the
+   bare `example.com`).
+3. **Preflight drop** — drop `OPTIONS` requests when `drop_preflight` is true.
+4. **Path denylist** — prefix match; drop paths that start with any denied prefix.
 
-- Auto-attach to every target (tab, popup, cross-origin navigation) via `Target.setAutoAttach`, so a multi-tab or redirect-heavy flow is captured as
-  one continuous, ordered session — not one log per tab.
-- The journey (which origins were visited, in what order, including redirects) is derived from CDP `Page`/`Target` navigation events. No injected
-  listeners.
+### 5.5 Persist in full
 
-### 7.3 Capture — lean by design
+No masking, redaction, or truncation. Steno records manual test sessions on test data; full fidelity —
+including test credentials, tokens, cookies, and complete payloads — is the point, so the user can
+read and reproduce exactly what happened. Payloads live in side-files, so size is never a reason to
+drop data.
 
-For each kept network call, one record carrying: **origin** (scheme + host), **path**, **method**, **status**, **request payload**, **response payload
-**, start/end timestamps, **duration**, and **transferred size**. Headers are not captured by default; only explicitly configured headers (e.g. a
-correlation header) are kept. Optionally, with `[payload] include_headers = true`, the full raw request and response headers (including `Cookie` /
-`Set-Cookie`) are written as JSON side-files and referenced via `request_headers_ref` / `response_headers_ref` — off by default to keep recordings lean. Console
-capture: `error` and `warn` by default, plus messages under a configurable application log namespace, and uncaught exceptions.
+### 5.6 Inspect a recording
 
-### 7.4 Filter to signal (config-driven, applied in order)
+`steno inspect` reads a run without rendering artifacts:
 
-- **Resource-type cut** — keep `Document`, `XHR`, `Fetch`, `WebSocket`; drop `Script`, `Stylesheet`, `Image`, `Font`, `Media`, `Manifest`. The single
-  largest noise reduction.
-- **Host allowlist** — keep only first-party / system-of-interest origins; drop third-party analytics, CDNs, telemetry.
-- **Path / method denylist** — drop `OPTIONS` preflights (or collapse into the matching call), health checks, favicon, telemetry endpoints.
+- **List view** — one line per kept event: `call` lines show seq, status, method, origin, path;
+  `navigation` lines show seq and the navigated origin/path.
+- **Filters** — `--origin` (case-insensitive substring) and `--status` (comma-separated codes or
+  classes such as `404` or `4xx,5xx`), combined with AND.
+- **Detail view** — `--seq <id>` shows one event in full: method, status, origin, path, duration,
+  size, and the request/response headers and bodies read from the payload side-files.
 
-### 7.5 Persist in full
+### 5.7 Render artifacts
 
-- No masking, redaction, or truncation. Steno records manual test sessions on test data; full fidelity —
-  including test credentials, tokens, cookies, and complete payloads — is the point, so the user can read
-  and reproduce exactly what happened. Payloads live in side-files, so size is not a reason to drop data.
+`steno render` derives `flow.mmd` — a Mermaid sequence diagram — from the canonical timeline.
+Participants are the unique call origins; each `call` becomes one interaction line
+(`User->>Host: METHOD /path (STATUS)`) and each `navigation` becomes a `Note over User`. Rendering is
+pure, offline, and separate from recording so it can be re-run without re-recording.
 
-### 7.6 Extract named facts (config-driven)
+### 5.8 Replay a call
 
-- A rule maps an endpoint + response JSON path to a named fact, e.g. `confirm.response → $.user.id` becomes `user_uuid`. Facts are first-class
-  timeline entries: both the audit details ("user `a3f…` created") and the join keys for the downstream analyse phase.
+`steno replay <run> <seq>` prints a copy-paste-ready `curl` reproducing one recorded `call`: URL from
+`origin + path`, captured headers as `-H` lines (HTTP/2 pseudo-headers and `content-length` dropped),
+and the request body as `--data-raw`. When no usable headers were captured, it still prints the
+command but warns on stderr to re-record with `include_headers = true`.
 
-### 7.7 Capture correlation keys
+## 6. Event model
 
-- For each kept call, capture `traceparent` (W3C) and/or a configurable correlation header (`X-Request-ID`), so the browser timeline shares join keys
-  with backend planes.
+One ordered stream of normalized events, ordered by capture sequence plus a wall-clock timestamp. Two
+event kinds are emitted today:
 
-### 7.8 Supplemental HTTP sources (general; OTP is the canonical example)
+- `navigation` — a top-frame page navigation or redirect; anchors the journey and the diagram.
+- `call` — one HTTP exchange (request and response folded into a single record).
 
-- Optionally poll an external HTTP source during the run and fold its data into the timeline as synthetic events. Motivating case: a flow needing an
-  emailed OTP caught by a local mail sink (e.g. Mailpit) with an HTTP API — Steno fetches the code and records "OTP received → entered", completing
-  the cross-service narrative the network tab never shows. Designed generically for any pollable HTTP source.
-
-### 7.9 Inspect a recording
-
-- Examine a recorded session without rendering artifacts: list calls, show one call's request/response payloads **and headers** by sequence id
-  (`--seq`), filter by origin (`--origin`) or status (`--status 4xx,5xx`, e.g. only non-2xx). This is the "inspect" half of the tool — turning the
-  durable timeline into something you can interrogate from the CLI.
-
-### 7.10 Emit artifacts
-
-All derived from one canonical timeline:
-
-- `timeline.jsonl` — the canonical, ordered, machine-ingestable record (also the most token-efficient form for an agent).
-- `report.html` — a human-readable rendering of the timeline.
-- `flow.mmd` — a Mermaid sequence diagram of the cross-system journey.
-
-## 8. The event model
-
-One ordered stream of normalized events, ordered by capture sequence plus a wall-clock timestamp. Event kinds:
-
-- `navigation` — a page navigation / redirect (anchors the journey and the sequence diagram).
-- `call` — one HTTP exchange (request + response folded into a single record).
-- `console` — an error, warning, namespaced log, or uncaught exception.
-- `fact` — an extracted named value (`user_uuid`, `account_id`).
-- `supplemental` — a folded-in external event (e.g. the OTP).
-
-A `call` looks roughly like:
+The canonical record is `timeline.jsonl`, one JSON object per line. A `call` looks like:
 
 ```json
 {
@@ -155,133 +141,92 @@ A `call` looks roughly like:
   "status": 201,
   "duration_ms": 142,
   "size_bytes": 3380,
-  "correlation": "00-4bf9...-01",
-  "request_ref": "payloads/0042-req.json",
-  "response_ref": "payloads/0042-res.json",
+  "request_ref": "payloads/0042-req.txt",
+  "response_ref": "payloads/0042-res.txt",
   "request_headers_ref": "payloads/0042-req-headers.json",
   "response_headers_ref": "payloads/0042-res-headers.json"
 }
 ```
 
-Request and response payloads are written in full to side-files and referenced (`request_ref` / `response_ref`) — never truncated. When
-`include_headers` is enabled, raw header maps are written alongside as `*-req-headers.json` / `*-res-headers.json` and referenced via
-`request_headers_ref` / `response_headers_ref`. The timeline itself stays compact because the bodies live beside it.
+Request and response bodies are written in full to side-files and referenced via `request_ref` /
+`response_ref` — never truncated. When `include_headers` is enabled, raw header maps are written
+alongside as `*-req-headers.json` / `*-res-headers.json` and referenced via `request_headers_ref` /
+`response_headers_ref`. The timeline stays compact because the bodies live beside it.
 
-## 9. Outputs in detail
+The full field list and the contract guarantees are in [`architecture.md`](./architecture.md#the-timeline-contract).
 
-- **`timeline.jsonl`** — one event per line, the schema above. The contract every other output is generated from; stable enough that an agent can rely
-  on it.
-- **`report.html`** — a single self-contained file rendering the timeline chronologically, grouped by origin, with non-2xx calls highlighted and
-  extracted facts surfaced at the top. No server, no build step.
-- **`flow.mmd`** — generated mechanically from the timeline; each cross-origin call becomes one line, statuses annotated, the user as actor. Example
-  shape:
+## 7. Outputs
 
-```
-sequenceDiagram
-  You->>Registration: POST /verify-code (200)
-  Mailpit-->>You: OTP received
-  You->>Registration: POST /confirm (200, user=a3f…)
-  You->>Account: POST /profile (201, account=acc_88…)
-  You->>Product: GET /dashboard (200)
-```
+All derived from one canonical timeline:
 
-## 10. Configuration
+- **`timeline.jsonl`** — the canonical, ordered, machine-ingestable record. The contract every other
+  output is generated from, and the most token-efficient form for an agent.
+- **`payloads/`** — full request/response bodies (and headers, when enabled) as side-files.
+- **`flow.mmd`** — a Mermaid sequence diagram of the cross-system journey, generated mechanically.
 
-A single TOML file declares the target, the filters, the extraction rules, the correlation header, and any supplemental sources. Sketch:
+## 8. CLI
 
-```toml
-[target]
-mode = "launch"            # or "attach"
-browser = "chrome"         # chrome | edge | brave | ...
-attach_url = "http://localhost:9222"   # used when mode = "attach"
-profile_dir = "~/.steno/profile"       # used when mode = "launch"
-start_url = "https://app.example.test"
+| Command | Behavior |
+| --- | --- |
+| `steno record --out <dir> [--url <u>] [--config <f>]` | Launch, capture until interrupted, write the timeline + payloads, print a summary. |
+| `steno inspect <run> [--origin <s>] [--status <list>] [--seq <id>]` | List events, filter, or show one event in full. |
+| `steno render <run>` | (Re)generate `flow.mmd` from the timeline. |
+| `steno replay <run> <seq>` | Print a `curl` reproducing one call. |
+| `steno version` | Print the build version. |
 
-[filter]
-resource_types = ["Document", "XHR", "Fetch", "WebSocket"]
-allow_hosts = ["*.int.example.test", "auth.example.test"]
-deny_paths = ["/health", "/favicon.ico"]
-drop_preflight = true
+`record` and `render` are separate so rendering can be iterated without re-recording. `<run>` accepts
+either a run directory or a path to a `timeline.jsonl`.
 
-[payload]
-include_documents = false  # capture document (HTML) bodies as side-files
-include_headers = false    # capture raw request/response headers + cookies as side-files
+## 9. Reserved and out-of-scope
 
-[[extract]]
-when_path = "/confirm"
-from = "response"
-json_path = "$.user.id"
-as = "user_uuid"
+### Reserved — parsed but not yet wired
 
-[correlation]
-header = "traceparent"
+These config sections are accepted (the parser is forward-compatible) but currently have **no effect**.
+The struct fields are left declared so a future slice can implement them without a schema change:
 
-[[supplemental]]
-name = "mailpit-otp"
-url = "http://localhost:8025/api/v1/messages"
-extract_otp = "\\b\\d{6}\\b"
-```
+- `[target].mode = "attach"`, `[target].attach_url`, `[target].profile_dir` — **attach-to-running** was
+  evaluated and dropped: Chrome 136+ refuses remote-debugging flags on the default profile, so attach
+  can never target the user's everyday browser with real sessions. Launch covers the realistic
+  workflow.
+- `[correlation].header` — capturing a join key (e.g. `traceparent`) shared with backend planes. Cheap
+  and general, so parked rather than cut; the `Event.Correlation` field stays in the schema.
+- `[[extract]]` — config-driven named-fact extraction (endpoint + JSON path → named timeline value).
+  Needs per-app config and duplicates the full payload side-files; revisit for a repeated-regression
+  workflow.
+- `[[supplemental]]` — polling an external HTTP source (e.g. a Mailpit OTP) and folding it into the
+  timeline. The most complex piece, niche value.
 
-## 11. CLI
+The `console`, `fact`, and `supplemental` event kinds exist in the model but are not emitted yet.
 
-- `steno record --config flow.toml --out ./runs/<timestamp>/` — attach or launch (per config/flags), record until interrupted, write
-  `timeline.jsonl` + payload side-files. Flags: `--browser`, `--attach <url>`, `--launch`.
-- `steno inspect ./runs/<timestamp>/` — examine a recording: list calls, show a call's payloads + headers by `--seq`, filter by origin or status (
-  `--status 4xx,5xx`, `--origin account.int.example`).
-- `steno render ./runs/<timestamp>/` — (re)generate `report.html` and `flow.mmd` from an existing timeline. Pure, offline, re-runnable.
+### Out of scope (non-goals)
 
-Recording and rendering are separate so rendering can be iterated without re-recording.
+- **Chromium family only.** Steno talks CDP (Chrome, Edge, Brave, Opera, …). Non-Chromium engines
+  (Firefox/WebDriver BiDi, Safari/WebKit) are out of scope; the recorder seam keeps that door open
+  cheaply (see architecture).
+- **Not a deep network profiler.** Origin, path, method, status, payloads, basic stats — not full
+  timing waterfalls or HAR-level detail.
+- **No literal user-input capture.** CDP cannot observe real clicks/keystrokes and Steno injects no
+  scripts. The journey is reconstructed from navigation and network events.
+- **Not an automation or replay-the-session tool.** It does not drive the browser or generate
+  Playwright/Puppeteer scripts. The human drives; Steno observes.
+- **Not a DOM/pixel session-replay recorder.** It is not rrweb.
+- **No analysis / no LLM in the tool.** Analysis happens downstream in an agent.
+- **No redaction or masking — ever.** Full fidelity is a deliberate, permanent design choice, not a
+  missing feature.
 
-## 12. Stack & distribution
+## 10. Resolved decisions
 
-- **Language: Go.** Chosen for three tool-specific reasons: a mature CDP client ecosystem (`chromedp` / `go-rod`); a concurrency model where merging
-  several concurrent tab event-streams into one ordered timeline is idiomatic (one channel, one draining goroutine); and single static binaries with
-  trivial cross-compilation. Covers the whole Chromium family via CDP.
-- **Key libraries:** `chromedp` or `go-rod` (CDP); `tidwall/gjson` (extract paths from arbitrary response JSON without predefining structs); stdlib
-  `encoding/json` (JSONL), `html/template` (report), `text/template`/`fmt` (Mermaid).
-- **Tooling:** `gofmt` + `staticcheck` from day one.
-- **Distribution (the headline requirement — colleagues just run it):** GoReleaser publishes cross-platform binaries (macOS/Linux/Windows,
-  arm64/amd64) to GitHub Releases — download one file, run it, no runtime installed. Also `go run github.com/<user>/steno@latest` and `go install`. (
-  `npx`-style invocation is Node-only and explicitly not a target; the single binary is the distribution story.)
+- **Name:** Steno.
+- **Protocol / browsers:** CDP, Chromium family only. Firefox/Safari out of scope.
+- **Connection:** launch-managed only (attach dropped, see §9).
+- **User actions:** no JS injection, no click/keystroke capture; journey from navigation + network.
+- **Config format:** TOML, lenient on unknown keys.
+- **Detail level:** origin, path, method, status, full payloads, basic stats — no full headers by
+  default, no timing waterfalls.
+- **Fidelity:** nothing masked, redacted, or truncated.
+- **Local only:** the debug port binds to localhost; the tool never phones home.
 
-## 13. Constraints & considerations
-
-- **Chrome 136+** ignores remote-debugging flags on the default profile; a dedicated `--user-data-dir` is required for the launch path, and an
-  attached instance must have been started with the debug port + a non-default profile. This is also correct test hygiene — no personal cookies in the
-  trace.
-- **Protocol-agnostic recorder seam (cheap insurance).** The capture core sits behind a `Recorder` interface that emits *normalized* events; no CDP
-  type leaks past it into the filter/extract/timeline/inspect/render layers. CDP is one implementation. This costs almost nothing now and is the exact
-  seam a future WebDriver BiDi backend (Firefox) would slot into — without committing to building it.
-- **Local only.** The debug port binds to localhost; nothing is sent anywhere. The tool never phones home.
-- **Full fidelity.** Nothing is masked or redacted; test credentials, tokens, and cookies are persisted verbatim so the session is faithfully reproducible. The trace is a local artifact the user owns.
-- **Cross-platform.** Must run on macOS, Linux, Windows.
-
-## 14. MVP — the quick first result (validate the idea fast)
-
-The first build proves the core idea with the least code. Walking skeleton:
-
-- Launch *or* attach a Chromium instance over CDP.
-- Single tab only (no auto-attach yet).
-- Capture `call` events (origin, path, method, status, payloads, duration, size) with the resource-type cut and host allowlist applied.
-- Write `timeline.jsonl` with full payloads in side-files.
-- A minimal `steno inspect` that prints the timeline.
-- A trivial `flow.mmd`.
-
-**MVP done looks like:** run `steno record` against a real multi-step flow in one tab, click through it, stop, and get a short `timeline.jsonl` of
-only the meaningful calls — each with its payloads and stats — that you can `steno inspect`, plus a readable sequence diagram. If that already feels
-useful, the idea is validated and the rest is worth building.
-
-## 15. Phased roadmap (for the planning agent to expand)
-
-- **Phase 0 — MVP:** as in §14.
-- **Phase 1 — full capture:** auto-attach across tabs/redirects; `navigation` events for the journey; console; path/method denylist; payload
-  side-files (full payloads); full `inspect` (filter by origin/status, show payload by seq). Establish the `Recorder` interface seam here.
-- **Phase 2 — audit value:** config-driven fact extraction; correlation-key capture.
-- **Phase 3 — outputs & supplemental:** polished `report.html`; richer `flow.mmd`; supplemental HTTP sources (OTP/Mailpit).
-- **Phase 4 — later / maybe:** expose Steno as an MCP server so an agent reads the live session; a failure-pivot helper that fans out to backend
-  planes by join key; (only if ever needed) a BiDi backend behind the existing seam.
-
-## 16. Acceptance criteria (how to judge whether the idea is good)
+## 11. Acceptance criteria
 
 Run a real, multi-step, multi-service flow and confirm:
 
@@ -289,20 +234,5 @@ Run a real, multi-step, multi-service flow and confirm:
 - The cross-system journey is reconstructable from the timeline alone.
 - The generated sequence diagram is readable and matches what happened.
 - Each call carries enough to be useful: origin, path, method, status, both payloads, duration, size.
-- Named facts (e.g. the new user's UUID) are present and correct.
-- An injected non-2xx is clearly localised to an origin and call, with payloads attached, and findable via `steno inspect --status 4xx,5xx`.
-
-## 17. Decisions (resolved)
-
-- **Name:** Steno.
-- **Protocol / browsers:** CDP, Chromium family only (Chrome, Edge, Brave, Opera, …). Firefox/Safari out of scope for v1.
-- **Connection:** support both attach-to-running and launch-managed.
-- **User actions:** no JS injection, no literal click/keystroke capture; journey reconstructed from navigation + network.
-- **Config format:** TOML.
-- **Detail level:** origin, path, method, status, payloads, basic stats — no full headers / waterfalls.
-
-## 18. Open questions (for Tony / the planning agent)
-
-- **Payload capture policy:** content-type allowlist (capture JSON/form, skip binary?). No size cap or truncation — payloads persist in full.
-- **WebSocket handling:** connection event only, or capture frames? (Lean toward connection-only for v1, frames deferred.)
-- **`inspect` ergonomics:** plain text output, or a TUI later? (Plain text for v1.)
+- An injected non-2xx is clearly localised to an origin and call, with payloads attached, and findable
+  via `steno inspect --status 4xx,5xx`.

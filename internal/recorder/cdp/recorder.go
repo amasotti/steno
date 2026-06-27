@@ -38,7 +38,7 @@ func (r *Recorder) warnf(format string, args ...any) {
 	if w == nil {
 		w = os.Stderr
 	}
-	fmt.Fprintf(w, "steno: "+format+"\n", args...)
+	_, _ = fmt.Fprintf(w, "steno: "+format+"\n", args...)
 }
 
 type requestSnapshot struct {
