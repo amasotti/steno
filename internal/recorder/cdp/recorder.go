@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
 
@@ -214,7 +215,7 @@ func (r *Recorder) saveRequestBody(ctx context.Context, seq int, req *trackedReq
 	if r.Payloads == nil || !req.hasPostData {
 		return ""
 	}
-	body, err := network.GetRequestPostData(req.requestID).Do(ctx)
+	body, err := network.GetRequestPostData(req.requestID).Do(cdp.WithExecutor(ctx, chromedp.FromContext(ctx).Target))
 	if err != nil {
 		return ""
 	}
@@ -229,7 +230,7 @@ func (r *Recorder) saveResponseBody(ctx context.Context, seq int, req *trackedRe
 	if r.Payloads == nil {
 		return ""
 	}
-	body, err := network.GetResponseBody(req.requestID).Do(ctx)
+	body, err := network.GetResponseBody(req.requestID).Do(cdp.WithExecutor(ctx, chromedp.FromContext(ctx).Target))
 	if err != nil {
 		return ""
 	}
