@@ -34,3 +34,19 @@ func TestEncodeJSONLWritesOneEventPerLine(t *testing.T) {
 		t.Fatalf("decoded event = %+v, want matching %+v", decoded, event)
 	}
 }
+
+func TestReadJSONLReadsEvents(t *testing.T) {
+	input := strings.NewReader(`{"seq":1,"kind":"call","origin":"https://example.test","method":"GET","path":"/api","status":200}` + "\n")
+
+	events, err := ReadJSONL(input)
+
+	if err != nil {
+		t.Fatalf("ReadJSONL returned error: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("len(events) = %d, want 1", len(events))
+	}
+	if events[0].Kind != KindCall || events[0].Path != "/api" {
+		t.Fatalf("event = %+v, want call /api", events[0])
+	}
+}

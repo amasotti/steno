@@ -6,6 +6,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+
+	"github.com/amasotti/steno/internal/inspect"
+	"github.com/amasotti/steno/internal/timeline"
 )
 
 func Run(_ context.Context, args []string, stdout io.Writer, _ io.Writer) error {
@@ -19,8 +24,7 @@ func Run(_ context.Context, args []string, stdout io.Writer, _ io.Writer) error 
 		_, err := parseRecord(args[1:])
 		return err
 	case "inspect":
-		_, err := fmt.Fprintln(stdout, "inspect: not implemented yet")
-		return err
+		return runInspect(args[1:], stdout)
 	case "render":
 		_, err := fmt.Fprintln(stdout, "render: not implemented yet")
 		return err
@@ -34,7 +38,7 @@ func Run(_ context.Context, args []string, stdout io.Writer, _ io.Writer) error 
 
 func usage() string {
 	return `Usage:
-  steno record --config flow.toml --out ./runs/<name> [--url https://example.com]
+  steno record --out ./runs/<name> [--url https://example.com]
   steno inspect ./runs/<name>
   steno render ./runs/<name>
 `
@@ -66,4 +70,34 @@ func parseRecord(args []string) (RecordOptions, error) {
 	}
 
 	return opts, nil
+}
+
+func runInspect(args []string, stdout io.Writer) error {
+	if len(args) == 0 {
+		return errors.New("missing run directory")
+	}
+	if len(args) > 1 {
+		return fmt.Errorf("unexpected positional argument %q", args[1])
+	}
+
+	file, err := os.Open(filepath.Join(args[0], "timeline.jsonl"))
+	if err != nil {
+		return fmt.Errorf("open timeline: %w", err)
+	}
+	defer func() { _ = file.Close() }()
+
+	events, err := inspect.ReadTimeline(file)
+	if err != nil {
+		return err
+	}
+
+	for _, event := range events {
+		if event.Kind != timeline.KindCall {
+			continue
+		}
+		if _, err := fmt.Fprintf(stdout, "%04d  %d  %s  %s%s\n", event.Seq, event.Status, event.Method, event.Origin, event.Path); err != nil {
+			return err
+		}
+	}
+	return nil
 }
