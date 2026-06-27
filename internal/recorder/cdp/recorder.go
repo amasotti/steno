@@ -11,11 +11,13 @@ import (
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
 
+	"github.com/amasotti/steno/internal/filter"
 	"github.com/amasotti/steno/internal/timeline"
 )
 
 type Recorder struct {
-	URL string
+	URL    string
+	Filter *filter.Filter
 }
 
 type requestSnapshot struct {
@@ -38,8 +40,8 @@ type trackedRequest struct {
 	size         int
 }
 
-func New(rawURL string) *Recorder {
-	return &Recorder{URL: rawURL}
+func New(rawURL string, f *filter.Filter) *Recorder {
+	return &Recorder{URL: rawURL, Filter: f}
 }
 
 func (r *Recorder) Record(ctx context.Context) (<-chan timeline.Event, <-chan error) {
@@ -96,21 +98,24 @@ func (r *Recorder) record(parent context.Context, events chan<- timeline.Event) 
 			}
 			mu.Unlock()
 
-			if req == nil || !keepResourceType(req.resourceType) {
+			if req == nil {
 				return
 			}
 			event, ok := snapshotToEvent(requestSnapshot{
-				Sequence: int(sequence.Add(1)),
-				Method:   req.method,
-				URL:      req.rawURL,
-				Status:   req.status,
-				Start:    req.start,
-				End:      req.end,
-				Size:     req.size,
+				Method: req.method,
+				URL:    req.rawURL,
+				Status: req.status,
+				Start:  req.start,
+				End:    req.end,
+				Size:   req.size,
 			})
 			if !ok {
 				return
 			}
+			if !r.Filter.Keep(string(req.resourceType), event) {
+				return
+			}
+			event.Seq = int(sequence.Add(1))
 
 			select {
 			case events <- event:
@@ -165,13 +170,4 @@ func pathWithQuery(parsed *url.URL) string {
 		path += "?" + parsed.RawQuery
 	}
 	return path
-}
-
-func keepResourceType(resourceType network.ResourceType) bool {
-	switch resourceType {
-	case network.ResourceTypeDocument, network.ResourceTypeXHR, network.ResourceTypeFetch:
-		return true
-	default:
-		return false
-	}
 }

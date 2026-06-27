@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/amasotti/steno/internal/config"
+	"github.com/amasotti/steno/internal/filter"
 	"github.com/amasotti/steno/internal/inspect"
 	cdprecorder "github.com/amasotti/steno/internal/recorder/cdp"
 	"github.com/amasotti/steno/internal/render"
@@ -20,8 +22,8 @@ type eventRecorder interface {
 	Record(context.Context) (<-chan timeline.Event, <-chan error)
 }
 
-var newRecorder = func(rawURL string) eventRecorder {
-	return cdprecorder.New(rawURL)
+var newRecorder = func(rawURL string, f *filter.Filter) eventRecorder {
+	return cdprecorder.New(rawURL, f)
 }
 
 func Run(ctx context.Context, args []string, stdout io.Writer, _ io.Writer) error {
@@ -51,15 +53,16 @@ func Run(ctx context.Context, args []string, stdout io.Writer, _ io.Writer) erro
 
 func usage() string {
 	return `Usage:
-  steno record --out ./runs/<name> [--url https://example.com]
+  steno record --out ./runs/<name> [--url https://example.com] [--config flow.toml]
   steno inspect ./runs/<name>
   steno render ./runs/<name>
 `
 }
 
 type RecordOptions struct {
-	URL string
-	Out string
+	URL    string
+	Out    string
+	Config string
 }
 
 func parseRecord(args []string) (RecordOptions, error) {
@@ -69,6 +72,7 @@ func parseRecord(args []string) (RecordOptions, error) {
 	var opts RecordOptions
 	flags.StringVar(&opts.URL, "url", "", "URL to record")
 	flags.StringVar(&opts.Out, "out", "", "Output directory for the recording")
+	flags.StringVar(&opts.Config, "config", "", "Path to a TOML config file (optional)")
 
 	if err := flags.Parse(args); err != nil {
 		return RecordOptions{}, err
@@ -86,6 +90,21 @@ func parseRecord(args []string) (RecordOptions, error) {
 }
 
 func runRecord(ctx context.Context, opts RecordOptions, stdout io.Writer) error {
+	cfg := config.Default()
+	if opts.Config != "" {
+		loaded, err := config.Load(opts.Config)
+		if err != nil {
+			return err
+		}
+		cfg = loaded
+	}
+
+	// An explicit --url always overrides the config's start_url.
+	startURL := cfg.Target.StartURL
+	if opts.URL != "" {
+		startURL = opts.URL
+	}
+
 	if err := os.MkdirAll(opts.Out, 0o750); err != nil {
 		return fmt.Errorf("create output directory: %w", err)
 	}
@@ -96,7 +115,7 @@ func runRecord(ctx context.Context, opts RecordOptions, stdout io.Writer) error 
 	}
 	defer func() { _ = file.Close() }()
 
-	events, errs := newRecorder(opts.URL).Record(ctx)
+	events, errs := newRecorder(startURL, filter.New(cfg.Filter)).Record(ctx)
 	var recorded []timeline.Event
 	timelinePath := filepath.Join(opts.Out, "timeline.jsonl")
 	for event := range events {
