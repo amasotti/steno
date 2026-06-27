@@ -47,7 +47,7 @@ func stubRecorderFactory(t *testing.T, events []timeline.Event) func() {
 	t.Helper()
 
 	previous := newRecorder
-	newRecorder = func(rawURL string, _ *filter.Filter, _ *payload.Store, _ bool) eventRecorder {
+	newRecorder = func(rawURL string, _ *filter.Filter, _ *payload.Store, _, _ bool) eventRecorder {
 		return stubRecorder{events: events}
 	}
 	return func() {

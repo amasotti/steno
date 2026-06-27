@@ -41,6 +41,7 @@ type Filter struct {
 
 type Payload struct {
 	IncludeDocuments bool `toml:"include_documents"`
+	IncludeHeaders   bool `toml:"include_headers"`
 }
 
 type Redact struct {

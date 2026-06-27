@@ -49,6 +49,7 @@ drop_preflight = true
 # are skipped by default to keep the artifacts useful. Set this true only when
 # debugging a page document response itself.
 include_documents = false
+include_headers = true
 
 # --- Reserved for later slices (parsed, not yet applied) -----------------------
 

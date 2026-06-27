@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chromedp/cdproto/network"
+
 	"github.com/amasotti/steno/internal/payload"
 	"github.com/amasotti/steno/internal/timeline"
 )
@@ -51,7 +53,7 @@ func TestSnapshotToEventNormalizesURLAndDuration(t *testing.T) {
 }
 
 func TestShouldCapturePayloadSkipsDocumentsByDefault(t *testing.T) {
-	recorder := New("", nil, payload.NewStore(t.TempDir()), false)
+	recorder := New("", nil, payload.NewStore(t.TempDir()), false, false)
 
 	if recorder.shouldCapturePayload("Document") {
 		t.Fatal("document payload should be skipped by default")
@@ -90,5 +92,29 @@ func TestNavigationEventRejectsURLsWithoutHost(t *testing.T) {
 		if _, ok := navigationEvent(raw); ok {
 			t.Fatalf("navigationEvent(%q) returned ok=true, want false", raw)
 		}
+	}
+}
+
+func TestFlattenHeadersStringifiesValues(t *testing.T) {
+	got := flattenHeaders(network.Headers{
+		"content-type": "application/json",
+		"cookie":       "session=abc; csrf=xyz",
+		"x-count":      42,
+	})
+
+	if got["content-type"] != "application/json" {
+		t.Fatalf("content-type = %q", got["content-type"])
+	}
+	if got["cookie"] != "session=abc; csrf=xyz" {
+		t.Fatalf("cookie = %q", got["cookie"])
+	}
+	if got["x-count"] != "42" {
+		t.Fatalf("x-count = %q, want stringified 42", got["x-count"])
+	}
+}
+
+func TestFlattenHeadersEmptyReturnsNil(t *testing.T) {
+	if got := flattenHeaders(nil); got != nil {
+		t.Fatalf("flattenHeaders(nil) = %v, want nil", got)
 	}
 }

@@ -3,6 +3,7 @@ package cdp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"sync"
 	"sync/atomic"
@@ -23,6 +24,7 @@ type Recorder struct {
 	Filter           *filter.Filter
 	Payloads         *payload.Store
 	IncludeDocuments bool
+	IncludeHeaders   bool
 }
 
 type requestSnapshot struct {
@@ -56,8 +58,8 @@ type payloadWork struct {
 	event timeline.Event
 }
 
-func New(rawURL string, f *filter.Filter, payloads *payload.Store, includeDocuments bool) *Recorder {
-	return &Recorder{URL: rawURL, Filter: f, Payloads: payloads, IncludeDocuments: includeDocuments}
+func New(rawURL string, f *filter.Filter, payloads *payload.Store, includeDocuments, includeHeaders bool) *Recorder {
+	return &Recorder{URL: rawURL, Filter: f, Payloads: payloads, IncludeDocuments: includeDocuments, IncludeHeaders: includeHeaders}
 }
 
 func (r *Recorder) Record(ctx context.Context) (<-chan timeline.Event, <-chan error) {
@@ -292,6 +294,36 @@ func (r *Recorder) saveRequestBody(ctx context.Context, seq int, req *trackedReq
 		return ""
 	}
 	return ref
+}
+
+func (r *Recorder) saveHeaders(seq int, kind payload.Kind, resourceType network.ResourceType, headers map[string]string) string {
+	if r.Payloads == nil || !r.IncludeHeaders || len(headers) == 0 || !r.shouldCapturePayload(string(resourceType)) {
+		return ""
+	}
+	ref, err := r.Payloads.SaveHeaders(seq, kind, headers)
+	if err != nil {
+		return ""
+	}
+	return ref
+}
+
+// flattenHeaders converts CDP's map[string]any header bag into a plain
+// string map so no CDP type leaks past the recorder seam. Values are already
+// strings in practice; anything else is stringified defensively.
+func flattenHeaders(h network.Headers) map[string]string {
+	if len(h) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(h))
+	for k, v := range h {
+		switch val := v.(type) {
+		case string:
+			out[k] = val
+		default:
+			out[k] = fmt.Sprintf("%v", val)
+		}
+	}
+	return out
 }
 
 func (r *Recorder) saveResponseBody(ctx context.Context, seq int, req *trackedRequest) string {

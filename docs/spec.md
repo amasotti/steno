@@ -85,8 +85,9 @@ localisation) without any backend round-trip.
 
 For each kept network call, one record carrying: **origin** (scheme + host), **path**, **method**, **status**, **request payload**, **response payload
 **, start/end timestamps, **duration**, and **transferred size**. Headers are not captured by default; only explicitly configured headers (e.g. a
-correlation header) are kept. Console capture: `error` and `warn` by default, plus messages under a configurable application log namespace, and
-uncaught exceptions.
+correlation header) are kept. Optionally, with `[payload] include_headers = true`, the full raw request and response headers (including `Cookie` /
+`Set-Cookie`) are written as JSON side-files and referenced via `request_headers_ref` / `response_headers_ref` — off by default for privacy. Console
+capture: `error` and `warn` by default, plus messages under a configurable application log namespace, and uncaught exceptions.
 
 ### 7.4 Filter to signal (config-driven, applied in order)
 
@@ -155,12 +156,15 @@ A `call` looks roughly like:
   "correlation": "00-4bf9...-01",
   "request_ref": "payloads/0042-req.json",
   "response_ref": "payloads/0042-res.json",
+  "request_headers_ref": "payloads/0042-req-headers.json",
+  "response_headers_ref": "payloads/0042-res-headers.json",
   "truncated": false
 }
 ```
 
-Payloads above a configurable size are written to side-files and referenced (`request_ref` / `response_ref`); small ones may be inlined. The timeline
-itself stays compact.
+Payloads above a configurable size are written to side-files and referenced (`request_ref` / `response_ref`); small ones may be inlined. When
+`include_headers` is enabled, raw header maps are written alongside as `*-req-headers.json` / `*-res-headers.json` and referenced via
+`request_headers_ref` / `response_headers_ref`. The timeline itself stays compact.
 
 ## 9. Outputs in detail
 
@@ -197,6 +201,10 @@ resource_types = ["Document", "XHR", "Fetch", "WebSocket"]
 allow_hosts = ["*.int.example.test", "auth.example.test"]
 deny_paths = ["/health", "/favicon.ico"]
 drop_preflight = true
+
+[payload]
+include_documents = false  # capture document (HTML) bodies as side-files
+include_headers = false    # capture raw request/response headers + cookies as side-files
 
 [redact]
 mask_fields = ["password", "otp", "token"]
