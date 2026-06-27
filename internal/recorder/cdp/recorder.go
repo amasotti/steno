@@ -38,15 +38,17 @@ type requestSnapshot struct {
 }
 
 type trackedRequest struct {
-	method       string
-	rawURL       string
-	requestID    network.RequestID
-	hasPostData  bool
-	resourceType network.ResourceType
-	status       int
-	start        time.Time
-	end          time.Time
-	size         int
+	method          string
+	rawURL          string
+	requestID       network.RequestID
+	hasPostData     bool
+	resourceType    network.ResourceType
+	status          int
+	start           time.Time
+	end             time.Time
+	size            int
+	requestHeaders  map[string]string
+	responseHeaders map[string]string
 }
 
 type payloadWork struct {
@@ -95,6 +97,8 @@ func (r *Recorder) record(parent context.Context, events chan<- timeline.Event) 
 				if work.req != nil {
 					work.event.RequestRef = r.saveRequestBody(ctx, work.event.Seq, work.req)
 					work.event.ResponseRef = r.saveResponseBody(ctx, work.event.Seq, work.req)
+					work.event.RequestHeadersRef = r.saveHeaders(work.event.Seq, payload.KindRequestHeaders, work.req.resourceType, work.req.requestHeaders)
+					work.event.ResponseHeadersRef = r.saveHeaders(work.event.Seq, payload.KindResponseHeaders, work.req.resourceType, work.req.responseHeaders)
 				}
 
 				select {
@@ -128,11 +132,22 @@ func (r *Recorder) record(parent context.Context, events chan<- timeline.Event) 
 		case *network.EventRequestWillBeSent:
 			mu.Lock()
 			requests[ev.RequestID] = &trackedRequest{
-				method:      ev.Request.Method,
-				rawURL:      ev.Request.URL,
-				requestID:   ev.RequestID,
-				hasPostData: ev.Request.HasPostData,
-				start:       time.Now().UTC(),
+				method:         ev.Request.Method,
+				rawURL:         ev.Request.URL,
+				requestID:      ev.RequestID,
+				hasPostData:    ev.Request.HasPostData,
+				start:          time.Now().UTC(),
+				requestHeaders: flattenHeaders(ev.Request.Headers),
+			}
+			mu.Unlock()
+		case *network.EventRequestWillBeSentExtraInfo:
+			// Raw headers include the Cookie header that Chrome redacts from the
+			// main event. Overwrite the fallback captured above when present.
+			mu.Lock()
+			if req := requests[ev.RequestID]; req != nil {
+				if h := flattenHeaders(ev.Headers); len(h) > 0 {
+					req.requestHeaders = h
+				}
 			}
 			mu.Unlock()
 		case *network.EventResponseReceived:
@@ -141,6 +156,18 @@ func (r *Recorder) record(parent context.Context, events chan<- timeline.Event) 
 			if req != nil {
 				req.resourceType = ev.Type
 				req.status = int(ev.Response.Status)
+				if req.responseHeaders == nil {
+					req.responseHeaders = flattenHeaders(ev.Response.Headers)
+				}
+			}
+			mu.Unlock()
+		case *network.EventResponseReceivedExtraInfo:
+			// Raw headers include Set-Cookie that Chrome redacts from the main event.
+			mu.Lock()
+			if req := requests[ev.RequestID]; req != nil {
+				if h := flattenHeaders(ev.Headers); len(h) > 0 {
+					req.responseHeaders = h
+				}
 			}
 			mu.Unlock()
 		case *network.EventLoadingFinished:
