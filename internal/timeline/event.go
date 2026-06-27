@@ -17,19 +17,21 @@ const (
 )
 
 type Event struct {
-	Seq         int       `json:"seq"`
-	Time        time.Time `json:"ts"`
-	Kind        Kind      `json:"kind"`
-	Origin      string    `json:"origin,omitempty"`
-	Method      string    `json:"method,omitempty"`
-	Path        string    `json:"path,omitempty"`
-	Status      int       `json:"status,omitempty"`
-	DurationMS  int       `json:"duration_ms,omitempty"`
-	SizeBytes   int       `json:"size_bytes,omitempty"`
-	Correlation string    `json:"correlation,omitempty"`
-	RequestRef  string    `json:"request_ref,omitempty"`
-	ResponseRef string    `json:"response_ref,omitempty"`
-	Truncated   bool      `json:"truncated,omitempty"`
+	Seq             int             `json:"seq"`
+	Time            time.Time       `json:"ts"`
+	Kind            Kind            `json:"kind"`
+	Origin          string          `json:"origin,omitempty"`
+	Method          string          `json:"method,omitempty"`
+	Path            string          `json:"path,omitempty"`
+	Status          int             `json:"status,omitempty"`
+	DurationMS      int             `json:"duration_ms,omitempty"`
+	SizeBytes       int             `json:"size_bytes,omitempty"`
+	Correlation     string          `json:"correlation,omitempty"`
+	RequestPayload  json.RawMessage `json:"request_payload,omitempty"`
+	ResponsePayload json.RawMessage `json:"response_payload,omitempty"`
+	RequestRef      string          `json:"request_ref,omitempty"`
+	ResponseRef     string          `json:"response_ref,omitempty"`
+	Truncated       bool            `json:"truncated,omitempty"`
 }
 
 func WriteJSONL(w io.Writer, event Event) error {

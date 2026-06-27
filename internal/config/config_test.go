@@ -18,6 +18,9 @@ func TestDefaultConfigHasUsefulCaptureDefaults(t *testing.T) {
 	if got, want := cfg.Redact.MaxPayloadBytes, 8192; got != want {
 		t.Fatalf("Redact.MaxPayloadBytes = %d, want %d", got, want)
 	}
+	if cfg.Payload.IncludeDocuments {
+		t.Fatal("Payload.IncludeDocuments = true, want false by default")
+	}
 }
 
 func TestLoadOverlaysOntoDefaults(t *testing.T) {

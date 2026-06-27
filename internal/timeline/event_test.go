@@ -10,13 +10,15 @@ import (
 func TestEncodeJSONLWritesOneEventPerLine(t *testing.T) {
 	var out strings.Builder
 	event := Event{
-		Seq:    42,
-		Time:   time.Date(2026, 6, 27, 14, 2, 40, 118000000, time.UTC),
-		Kind:   KindCall,
-		Origin: "https://account.int.example",
-		Method: "POST",
-		Path:   "/api/v1/profile",
-		Status: 201,
+		Seq:             42,
+		Time:            time.Date(2026, 6, 27, 14, 2, 40, 118000000, time.UTC),
+		Kind:            KindCall,
+		Origin:          "https://account.int.example",
+		Method:          "POST",
+		Path:            "/api/v1/profile",
+		Status:          201,
+		RequestPayload:  json.RawMessage(`{"username":"admin"}`),
+		ResponsePayload: json.RawMessage(`{"ok":true}`),
 	}
 
 	if err := WriteJSONL(&out, event); err != nil {
@@ -32,6 +34,12 @@ func TestEncodeJSONLWritesOneEventPerLine(t *testing.T) {
 	}
 	if decoded.Seq != event.Seq || decoded.Kind != event.Kind || decoded.Path != event.Path {
 		t.Fatalf("decoded event = %+v, want matching %+v", decoded, event)
+	}
+	if !strings.Contains(out.String(), `"request_payload":{"username":"admin"}`) {
+		t.Fatalf("JSONL output = %q, want inline request payload object", out.String())
+	}
+	if !strings.Contains(out.String(), `"response_payload":{"ok":true}`) {
+		t.Fatalf("JSONL output = %q, want inline response payload object", out.String())
 	}
 }
 

@@ -17,6 +17,7 @@ const (
 type Config struct {
 	Target       Target               `toml:"target"`
 	Filter       Filter               `toml:"filter"`
+	Payload      Payload              `toml:"payload"`
 	Redact       Redact               `toml:"redact"`
 	Correlation  Correlation          `toml:"correlation"`
 	Extract      []ExtractRule        `toml:"extract"`
@@ -36,6 +37,10 @@ type Filter struct {
 	AllowHosts    []string `toml:"allow_hosts"`
 	DenyPaths     []string `toml:"deny_paths"`
 	DropPreflight bool     `toml:"drop_preflight"`
+}
+
+type Payload struct {
+	IncludeDocuments bool `toml:"include_documents"`
 }
 
 type Redact struct {
