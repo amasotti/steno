@@ -86,7 +86,7 @@ localisation) without any backend round-trip.
 For each kept network call, one record carrying: **origin** (scheme + host), **path**, **method**, **status**, **request payload**, **response payload
 **, start/end timestamps, **duration**, and **transferred size**. Headers are not captured by default; only explicitly configured headers (e.g. a
 correlation header) are kept. Optionally, with `[payload] include_headers = true`, the full raw request and response headers (including `Cookie` /
-`Set-Cookie`) are written as JSON side-files and referenced via `request_headers_ref` / `response_headers_ref` — off by default for privacy. Console
+`Set-Cookie`) are written as JSON side-files and referenced via `request_headers_ref` / `response_headers_ref` — off by default to keep recordings lean. Console
 capture: `error` and `warn` by default, plus messages under a configurable application log namespace, and uncaught exceptions.
 
 ### 7.4 Filter to signal (config-driven, applied in order)
@@ -96,10 +96,11 @@ capture: `error` and `warn` by default, plus messages under a configurable appli
 - **Host allowlist** — keep only first-party / system-of-interest origins; drop third-party analytics, CDNs, telemetry.
 - **Path / method denylist** — drop `OPTIONS` preflights (or collapse into the matching call), health checks, favicon, telemetry endpoints.
 
-### 7.5 Clean & redact
+### 7.5 Persist in full
 
-- Truncate large payloads to a configurable size, flagging that truncation occurred.
-- Mask secrets (passwords, tokens, the OTP) at capture time — they must never reach disk.
+- No masking, redaction, or truncation. Steno records manual test sessions on test data; full fidelity —
+  including test credentials, tokens, cookies, and complete payloads — is the point, so the user can read
+  and reproduce exactly what happened. Payloads live in side-files, so size is not a reason to drop data.
 
 ### 7.6 Extract named facts (config-driven)
 
@@ -157,14 +158,13 @@ A `call` looks roughly like:
   "request_ref": "payloads/0042-req.json",
   "response_ref": "payloads/0042-res.json",
   "request_headers_ref": "payloads/0042-req-headers.json",
-  "response_headers_ref": "payloads/0042-res-headers.json",
-  "truncated": false
+  "response_headers_ref": "payloads/0042-res-headers.json"
 }
 ```
 
-Payloads above a configurable size are written to side-files and referenced (`request_ref` / `response_ref`); small ones may be inlined. When
+Request and response payloads are written in full to side-files and referenced (`request_ref` / `response_ref`) — never truncated. When
 `include_headers` is enabled, raw header maps are written alongside as `*-req-headers.json` / `*-res-headers.json` and referenced via
-`request_headers_ref` / `response_headers_ref`. The timeline itself stays compact.
+`request_headers_ref` / `response_headers_ref`. The timeline itself stays compact because the bodies live beside it.
 
 ## 9. Outputs in detail
 
@@ -186,7 +186,7 @@ sequenceDiagram
 
 ## 10. Configuration
 
-A single TOML file declares the target, the filters, the extraction and redaction rules, the correlation header, and any supplemental sources. Sketch:
+A single TOML file declares the target, the filters, the extraction rules, the correlation header, and any supplemental sources. Sketch:
 
 ```toml
 [target]
@@ -205,10 +205,6 @@ drop_preflight = true
 [payload]
 include_documents = false  # capture document (HTML) bodies as side-files
 include_headers = false    # capture raw request/response headers + cookies as side-files
-
-[redact]
-mask_fields = ["password", "otp", "token"]
-max_payload_bytes = 8192
 
 [[extract]]
 when_path = "/confirm"
@@ -256,7 +252,7 @@ Recording and rendering are separate so rendering can be iterated without re-rec
   type leaks past it into the filter/extract/timeline/inspect/render layers. CDP is one implementation. This costs almost nothing now and is the exact
   seam a future WebDriver BiDi backend (Firefox) would slot into — without committing to building it.
 - **Local only.** The debug port binds to localhost; nothing is sent anywhere. The tool never phones home.
-- **Privacy.** Secrets are masked before they hit disk. The trace is a local artifact the user owns.
+- **Full fidelity.** Nothing is masked or redacted; test credentials, tokens, and cookies are persisted verbatim so the session is faithfully reproducible. The trace is a local artifact the user owns.
 - **Cross-platform.** Must run on macOS, Linux, Windows.
 
 ## 14. MVP — the quick first result (validate the idea fast)
@@ -266,7 +262,7 @@ The first build proves the core idea with the least code. Walking skeleton:
 - Launch *or* attach a Chromium instance over CDP.
 - Single tab only (no auto-attach yet).
 - Capture `call` events (origin, path, method, status, payloads, duration, size) with the resource-type cut and host allowlist applied.
-- Write `timeline.jsonl` (inline truncated payloads, no side-files yet).
+- Write `timeline.jsonl` with full payloads in side-files.
 - A minimal `steno inspect` that prints the timeline.
 - A trivial `flow.mmd`.
 
@@ -278,7 +274,7 @@ useful, the idea is validated and the rest is worth building.
 
 - **Phase 0 — MVP:** as in §14.
 - **Phase 1 — full capture:** auto-attach across tabs/redirects; `navigation` events for the journey; console; path/method denylist; payload
-  side-files + truncation; redaction; full `inspect` (filter by origin/status, show payload by seq). Establish the `Recorder` interface seam here.
+  side-files (full payloads); full `inspect` (filter by origin/status, show payload by seq). Establish the `Recorder` interface seam here.
 - **Phase 2 — audit value:** config-driven fact extraction; correlation-key capture.
 - **Phase 3 — outputs & supplemental:** polished `report.html`; richer `flow.mmd`; supplemental HTTP sources (OTP/Mailpit).
 - **Phase 4 — later / maybe:** expose Steno as an MCP server so an agent reads the live session; a failure-pivot helper that fans out to backend
@@ -306,6 +302,6 @@ Run a real, multi-step, multi-service flow and confirm:
 
 ## 18. Open questions (for Tony / the planning agent)
 
-- **Payload capture policy:** max size, content-type allowlist (capture JSON/form, skip binary), and the inline-vs-side-file threshold.
+- **Payload capture policy:** content-type allowlist (capture JSON/form, skip binary?). No size cap or truncation — payloads persist in full.
 - **WebSocket handling:** connection event only, or capture frames? (Lean toward connection-only for v1, frames deferred.)
 - **`inspect` ergonomics:** plain text output, or a TUI later? (Plain text for v1.)

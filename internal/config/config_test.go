@@ -15,9 +15,6 @@ func TestDefaultConfigHasUsefulCaptureDefaults(t *testing.T) {
 	if cfg.Filter.DropPreflight != true {
 		t.Fatalf("Filter.DropPreflight = false, want true")
 	}
-	if got, want := cfg.Redact.MaxPayloadBytes, 8192; got != want {
-		t.Fatalf("Redact.MaxPayloadBytes = %d, want %d", got, want)
-	}
 	if cfg.Payload.IncludeDocuments {
 		t.Fatal("Payload.IncludeDocuments = true, want false by default")
 	}

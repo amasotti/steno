@@ -33,7 +33,6 @@ type Event struct {
 	ResponseRef        string          `json:"response_ref,omitempty"`
 	RequestHeadersRef  string          `json:"request_headers_ref,omitempty"`
 	ResponseHeadersRef string          `json:"response_headers_ref,omitempty"`
-	Truncated          bool            `json:"truncated,omitempty"`
 }
 
 func WriteJSONL(w io.Writer, event Event) error {

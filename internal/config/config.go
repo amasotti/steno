@@ -18,7 +18,6 @@ type Config struct {
 	Target       Target               `toml:"target"`
 	Filter       Filter               `toml:"filter"`
 	Payload      Payload              `toml:"payload"`
-	Redact       Redact               `toml:"redact"`
 	Correlation  Correlation          `toml:"correlation"`
 	Extract      []ExtractRule        `toml:"extract"`
 	Supplemental []SupplementalSource `toml:"supplemental"`
@@ -42,11 +41,6 @@ type Filter struct {
 type Payload struct {
 	IncludeDocuments bool `toml:"include_documents"`
 	IncludeHeaders   bool `toml:"include_headers"`
-}
-
-type Redact struct {
-	MaskFields      []string `toml:"mask_fields"`
-	MaxPayloadBytes int      `toml:"max_payload_bytes"`
 }
 
 type Correlation struct {
@@ -75,10 +69,6 @@ func Default() Config {
 		Filter: Filter{
 			ResourceTypes: []string{"Document", "XHR", "Fetch", "WebSocket"},
 			DropPreflight: true,
-		},
-		Redact: Redact{
-			MaskFields:      []string{"password", "otp", "token"},
-			MaxPayloadBytes: 8192,
 		},
 		Correlation: Correlation{
 			Header: "traceparent",
