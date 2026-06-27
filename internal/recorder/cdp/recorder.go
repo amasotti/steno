@@ -136,34 +136,58 @@ func (r *Recorder) record(parent context.Context, events chan<- timeline.Event) 
 		}
 	}()
 
-	// Capture the initial tab.
+	// Attach the initial tab first so its target id is known; that lets us tell
+	// it apart from every other tab without relying on opener metadata.
+	if err := chromedp.Run(ctx); err != nil {
+		return err
+	}
+	var firstID target.ID
+	if first := chromedp.FromContext(ctx).Target; first != nil {
+		firstID = first.TargetID
+	}
 	r.listenTab(ctx, st)
+	r.followNewTabs(ctx, st, firstID)
 
-	// Follow the rest of the browser. Every tab or popup another tab opens is a
-	// new CDP target; attaching a context to it makes chromedp enable the
-	// Network and Page domains on that target, so its events flow into the same
-	// sequence counter and channel — one ordered timeline across the whole
-	// browser, not one log per tab.
-	var attachedMu sync.Mutex
-	attached := map[target.ID]bool{}
+	if r.URL != "" {
+		if err := chromedp.Run(ctx, chromedp.Navigate(r.URL)); err != nil {
+			return err
+		}
+	}
+
+	<-parent.Done()
+	wg.Wait()
+	if errors.Is(parent.Err(), context.Canceled) {
+		return nil
+	}
+	return parent.Err()
+}
+
+// followNewTabs watches the browser for every other tab or popup — opened by a
+// link, by window.open, or by hand — and attaches a context to each new page
+// target. Attaching makes chromedp enable the Network and Page domains on that
+// target, so its events flow into the shared timeline: one ordered record across
+// the whole browser, not one log per tab. firstID is the already-captured
+// initial tab, which must not be attached twice.
+func (r *Recorder) followNewTabs(ctx context.Context, st *recordState, firstID target.ID) {
+	var mu sync.Mutex
+	attached := map[target.ID]bool{firstID: true}
+
 	chromedp.ListenBrowser(ctx, func(ev any) {
 		created, ok := ev.(*target.EventTargetCreated)
 		if !ok {
 			return
 		}
 		info := created.TargetInfo
-		// Only real pages opened by another tab (link or popup). The first tab
-		// has no opener and is already captured above.
-		if info.Type != "page" || info.OpenerID == "" {
+		if info.Type != "page" {
 			return
 		}
-		attachedMu.Lock()
+		mu.Lock()
 		if attached[info.TargetID] {
-			attachedMu.Unlock()
+			mu.Unlock()
 			return
 		}
 		attached[info.TargetID] = true
-		attachedMu.Unlock()
+		mu.Unlock()
 
 		// ListenBrowser callbacks run synchronously on the event loop, so any
 		// CDP round-trip (NewContext/Run) must happen on its own goroutine.
@@ -175,25 +199,6 @@ func (r *Recorder) record(parent context.Context, events chan<- timeline.Event) 
 			}
 		}(info.TargetID)
 	})
-
-	actions := []chromedp.Action{
-		network.Enable(),
-		page.Enable(),
-	}
-	if r.URL != "" {
-		actions = append(actions, chromedp.Navigate(r.URL))
-	}
-
-	if err := chromedp.Run(ctx, actions...); err != nil {
-		return err
-	}
-
-	<-parent.Done()
-	wg.Wait()
-	if errors.Is(parent.Err(), context.Canceled) {
-		return nil
-	}
-	return parent.Err()
 }
 
 // fetchBodies fills in a captured call's side-file refs, fetching request and
