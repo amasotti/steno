@@ -1,0 +1,64 @@
+# Steno config — example. Copy to config.toml and adapt to your app.
+#
+#   cp config.example.toml config.toml
+#   steno record --config config.toml --out ./runs/demo
+#
+# Everything here is optional: omitted keys keep Steno's built-in defaults, and
+# running `steno record` with no --config reproduces the default behavior. An
+# explicit --url on the command line overrides start_url below.
+#
+# NOTE: Only [target].start_url and the [filter] section take effect today. The
+# other sections are parsed and reserved for later slices (payload capture,
+# redaction, fact extraction, correlation, supplemental sources); they are
+# shown here as commented examples and currently have no effect.
+
+[target]
+mode = "launch"                       # launch | attach  (only launch is used today)
+browser = "chrome"                    # chrome | edge | brave | ...
+start_url = "https://app.example.com" # where the headful browser opens
+
+[filter]
+# Resource-type allowlist — the single biggest noise cut. Keep meaningful
+# traffic; drop Script/Stylesheet/Image/Font/Media/Manifest. These are the
+# defaults; delete this line to accept them.
+resource_types = ["Document", "XHR", "Fetch", "WebSocket"]
+
+# Host allowlist — keep your first-party / system-of-interest origins, drop
+# third-party analytics, CDNs and widgets. An empty list (or omitting the key)
+# allows ALL hosts. "*.example.com" is a leading-wildcard suffix match: it
+# matches api.example.com and auth.example.com but NOT the bare example.com, so
+# list the apex separately if you want it.
+allow_hosts = [
+  "example.com",
+  "*.example.com",
+]
+
+# Path denylist — prefix match. Drop health checks, favicons, polling and other
+# low-signal endpoints. "/health" also matches "/healthz".
+deny_paths = [
+  "/favicon.ico",
+  "/health",
+]
+
+# Drop CORS preflight requests (method == OPTIONS). Default: true.
+drop_preflight = true
+
+# --- Reserved for later slices (parsed, not yet applied) -----------------------
+
+# [redact]
+# mask_fields = ["password", "otp", "token"]   # never written to disk
+# max_payload_bytes = 8192                      # truncate larger payloads
+
+# [correlation]
+# header = "traceparent"                        # join key shared with backend planes
+
+# [[extract]]
+# when_path = "/api/confirm"                    # endpoint to match
+# from = "response"                             # request | response
+# json_path = "$.user.id"                       # value to pull out
+# as = "user_uuid"                              # name it gets in the timeline
+
+# [[supplemental]]
+# name = "mailpit-otp"
+# url = "http://localhost:8025/api/v1/messages"
+# extract_otp = "$.messages[0].Snippet"
