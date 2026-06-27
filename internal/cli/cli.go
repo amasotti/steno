@@ -280,6 +280,9 @@ func runReplay(args []string, stdout, stderr io.Writer) error {
 	if len(args) > 2 {
 		return fmt.Errorf("unexpected positional argument %q", args[2])
 	}
+	if strings.HasPrefix(args[0], "-") {
+		return errors.New("missing run directory")
+	}
 	seq, err := strconv.Atoi(args[1])
 	if err != nil {
 		return fmt.Errorf("invalid seq %q", args[1])
@@ -340,6 +343,9 @@ func runRender(args []string, stdout io.Writer) error {
 	}
 	if len(args) > 1 {
 		return fmt.Errorf("unexpected positional argument %q", args[1])
+	}
+	if strings.HasPrefix(args[0], "-") {
+		return errors.New("missing run directory")
 	}
 
 	runDir, timelinePath := resolveRun(args[0])
