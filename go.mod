@@ -6,7 +6,7 @@ require (
 	github.com/chromedp/cdproto v0.0.0-20260321001828-e3e3800016bc
 	github.com/chromedp/chromedp v0.15.1
 	github.com/fatih/color v1.19.0
-	github.com/pelletier/go-toml/v2 v2.4.2
+	github.com/pelletier/go-toml/v2 v2.4.3
 )
 
 require (
